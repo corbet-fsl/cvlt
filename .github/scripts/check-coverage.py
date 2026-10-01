@@ -101,6 +101,13 @@ def check(lcov, raw_json, root, allowed=None, annotated=None):
     # and therefore cannot detect a deleted DA record reliably.
     annotated_lines, annotated_files = {}, set()
     current = None
+    # LLVM omits the filename heading when exactly one source is rendered.
+    # The companion JSON/LCOV must agree on that sole file first.
+    headings = [row for row in annotated.splitlines()
+                if row.startswith('/') and row.endswith('.rs:')]
+    if not headings and len(files) == 1:
+        current = next(iter(files))
+        annotated_files.add(current)
     for record in annotated.splitlines():
         if record.endswith('.rs:') and record.startswith('/'):
             current = source_path(record[:-1])

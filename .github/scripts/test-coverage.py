@@ -89,6 +89,9 @@ class GateTests(unittest.TestCase):
             check(LCOV, raw, ROOT)
 
 
+    def test_single_source_llvm_output_omits_its_heading(self):
+        check(LCOV, RAW, ROOT, annotated=ANNOTATED.split('\n', 1)[1])
+
     def test_each_emitted_line_requires_an_independent_location_and_hit(self):
         for report, annotated in [
             (LCOV.replace('DA:2,1\n', ''), ANNOTATED),
