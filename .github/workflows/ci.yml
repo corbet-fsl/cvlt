@@ -69,7 +69,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dependency-lock
       - uses: dtolnay/rust-toolchain@stable
@@ -94,7 +94,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dependency-lock
       # Branch instrumentation remains a nightly Rust feature; product builds use stable.
@@ -140,7 +140,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dependency-lock
       # Experimental upstream coverage runs on current nightly; product builds remain stable.
