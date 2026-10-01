@@ -24,12 +24,14 @@ ports lend Keys, shared Storage, staged compound batches, Records lookup and Wal
 and provide `lock`. Restore distinguishes Present, KnownAbsent and Unavailable.
 Full unlock/restore wiring depends on the corresponding owner capabilities.
 
-**Restore invariant.** The first root passkey deterministically derives the root.
-Pairing transfers it to a new device, which retains an authenticated copy wrapped
-under its own passkey PRF in member records. Any registered passkey restores while
-those records exist; only the root passkey restores identity after record loss.
-Contacts and history need retained records. Vault never invents a replacement
-identity, operator backup or weaker retention guarantee.
+**Restore invariant.** Every enrolled passkey has equal capabilities. A random
+common identity root is retained in member DHT records as a separate authenticated
+wrapped copy under each passkey. Active devices refresh their records. There is
+no privileged first passkey or operator-held copy. If long absence and loss of all
+local copies also leave no DHT records, identity and data can both be lost, with
+the same implications for every passkey. Unavailable data never authorizes a
+replacement identity. Keys and Records own the wrapping and discovery formats;
+Vault wires their capabilities without inventing a recovery mechanism.
 
 **Test obligations.** Native and browser storage contracts, locked refusal,
 authenticated restore records, and failures at every combined owner checkpoint
@@ -44,8 +46,9 @@ companion changes and outputs under one storage fence. Staging never reports
 durable success. Cancellation, conflicts and unknown outcomes reconcile through
 the owner. Keys' pending receipt remains inside its sealed checkpoint.
 
-Records, Wallet, live G3 authority, paired-root retention and the browser iframe
-ceremony are pending owner integrations. No permissive authority or proof engine
+Records, Wallet, live G3 authority, equal-passkey root custody and the browser
+iframe ceremony are pending owner integrations. Current Keys dependency behavior
+that derives a privileged identity from PRF does not satisfy this restore contract. No permissive authority or proof engine
 is supplied. The decided custody and restore rules above are requirements, not
 claims that these missing integrations already pass.
 
