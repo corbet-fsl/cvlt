@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Require all emitted source lines and branches from the same LLVM execution."""
 import json
+import re
 from collections import Counter
 import sys
 from pathlib import Path
 
 
-def check(lcov, raw_json, root, allowed=None):
+def check(lcov, raw_json, root, allowed=None, annotated=None):
     allowed = {} if allowed is None else allowed
     root = Path(root).resolve()
 
@@ -93,6 +94,29 @@ def check(lcov, raw_json, root, allowed=None):
             raise ValueError(f'Unexpected LCOV record: {record}')
     if current is not None or files != set(expected) or not lines:
         raise ValueError('Incomplete or empty source coverage inventory')
+    if not isinstance(annotated, str):
+        raise ValueError('Missing same-execution annotated source report')
+    # Cross-check every emitted line location against the same execution's
+    # upstream annotated report. Summary counts alone can include generic copies
+    # and therefore cannot detect a deleted DA record reliably.
+    annotated_lines, annotated_files = {}, set()
+    current = None
+    for record in annotated.splitlines():
+        if record.endswith('.rs:') and record.startswith('/'):
+            current = source_path(record[:-1])
+            if current in annotated_files:
+                raise ValueError('Duplicate annotated source')
+            annotated_files.add(current)
+        match = re.match(r'^\s*(\d+)\|\s*([0-9]+(?:\.[0-9]+)?[kMGT]?)\|', record)
+        if match:
+            key = (current, int(match[1]))
+            if current is None or key in annotated_lines:
+                raise ValueError('Invalid annotated line inventory')
+            annotated_lines[key] = float(match[2].rstrip('kMGT')) > 0
+    if annotated_files != files or set(annotated_lines) != set(lines):
+        raise ValueError('Incomplete emitted line inventory')
+    if any((lines[key] > 0) != hit for key, hit in annotated_lines.items()):
+        raise ValueError('Inconsistent emitted line coverage')
     if not allowed.keys() <= lines.keys():
         raise ValueError('Missing exclusion anchor in measured source')
     if any((key[0], key[1]) in allowed for key in branches):
@@ -131,10 +155,10 @@ def exclusions(root, target):
 if __name__ == '__main__':
     try:
         root = Path.cwd()
-        target = sys.argv[3] if len(sys.argv) > 3 else 'native'
+        target = sys.argv[4] if len(sys.argv) > 4 else 'native'
         if target not in ('native', 'wasm'):
             raise ValueError('Unknown coverage target')
         check(Path(sys.argv[1]).read_text(), json.loads(Path(sys.argv[2]).read_text()),
-              root, exclusions(root, target))
+              root, exclusions(root, target), Path(sys.argv[3]).read_text())
     except (ValueError, KeyError, TypeError, OSError, IndexError) as error:
         sys.exit(f'Coverage gate: {error}')

@@ -60,3 +60,8 @@ coverage does not claim that every generic instantiation executes. Regression
 cases reject incomplete, duplicated, inconsistent and uncovered reports. Any
 documented line exclusion must still match its exact source, occur in the report
 with zero hits, and contain no branch; stale or exercised exclusions fail.
+
+The same execution also exports LLVM annotated source. Every emitted LCOV line
+location and its covered/uncovered state must match that independent listing.
+This rejects a removed DA record even when generic-instantiation totals differ
+from source totals. The original annotation and raw JSON remain available.
