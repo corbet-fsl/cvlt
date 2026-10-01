@@ -8,10 +8,21 @@ license = "FSL-1.1-ALv2"
 repository = "https://github.com/corbet-libs/cvlt"
 readme = "README.md"
 publish = false
-include = ["Cargo.toml", "src/**", "README.md", "LICENSE.md"]
+include = ["Cargo.toml", "src/**", "README.md", "LICENSE.md", "docs/**"]
 
 [lib]
 crate-type = ["rlib"]
+
+[dependencies]
+ckmg = { git = "https://github.com/corbet-foss/ckmg", branch = "main" }
+cwst = { git = "https://github.com/corbet-foss/cwst", branch = "main" }
+futures = "0.3"
+blake3 = "1"
+zeroize = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+futures-executor = "0.3"
+wasm-bindgen-test = "0.3"
 
 [lints.rust]
 unsafe_code = "forbid"

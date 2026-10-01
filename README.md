@@ -1,37 +1,31 @@
 # cvlt
 
-**Vault: the member side's trust core.**
+## Scope
 
-`cvlt` holds the member's private state (identity, device lineage, credentials,
-proofs and storage), protected on every device and consistent across all of
-the member's devices. It hands out **operations, never roots**: root and device
-keys never leave the vault; narrowly scoped purpose keys may go to the engines
-that need them. It runs isolated in its own cross-origin iframe, with proof
-computation in a worker of that origin, and contains no network code.
+Vault is the device trust facade over Keys (`ckmg`), Storage (`cwst`), Records
+(`cdht`) and Wallet (`cwlt`). It owns capability wiring and the shared transaction
+boundary. Each drawer keeps its own lineage, record, proof and accepted state.
 
-Status: name reserved, no implementation yet.
+The implemented KeyStore adapter commits actual encrypted Keys checkpoints with
+opaque companion owner changes and output bytes under one cwst fence. A staged
+batch never reports durable success. Cancellation, conflicts and unknown outcomes
+require reopening/reconciliation through the owner. Keys' own pending receipt
+remains inside its sealed checkpoint. No PRF or root enters this storage adapter.
 
-## Structure
+Records and Wallet adapters remain external owner integration seams. There is no
+fake proof engine, implicit enrollment or permissive authority implementation.
+The real ckmg machine is constructed with the caller's current G3 Authority port.
 
-`cvlt` is the facade and decides (door, access rules, lineage rules, membership
-credential). Its drawers are separate LGPL libraries that execute:
+Restore distinguishes unavailable records from authenticated known absence.
+Neither erases deterministic same-passkey identity or membership. Actual active
+member restoration of contacts/history still requires retained device records.
+A distinct paired PRF also requires the original root's authenticated encrypted
+transfer; its product retention/reenrollment decision remains open. Vault invents
+no operator backup or replacement identity to fill that gap.
 
-| Drawer | Library |
-|---|---|
-| Proofs | `cwlt` |
-| Keys | `ckmg` |
-| Signed replicated records | `cdht` |
-| Encrypted web store | `cwst` |
-
-## Boundaries
-
-What it never does:
-
-- Secrets never leave the device through `cvlt`; no network code.
-- No own cryptography.
-- No backup or recovery path (no-recovery principle): devices are added only from a live device.
+Native and actual browser tests, coverage and independent review are required;
+CI status is evidence only for the exercised adapters, not end-to-end restore.
 
 ## License
 
-Copyright 2026 Julian Y. Richard Corbet. Licensed under the
 [Functional Source License, Version 1.1, ALv2 Future License](LICENSE.md).
