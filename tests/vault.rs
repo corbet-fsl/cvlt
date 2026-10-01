@@ -366,3 +366,10 @@ shared!(unknown_outcome_is_reconciled_and_locked_reads_refuse, {
     );
     assert_eq!(reopened.load_pending().unwrap()[0].bytes, replacement);
 });
+
+// Link the maintained profiling runtime only into the instrumented test binary.
+#[cfg(all(target_arch = "wasm32", owned_browser_coverage))]
+#[wasm_bindgen_test::wasm_bindgen_test]
+fn profiling_runtime_is_linked() {
+    let _ = browser_coverage_runtime::__owned_test_module_signature();
+}

@@ -32,8 +32,15 @@ merge/lineage evidence and the shared checkpoint transaction. Whole active-membe
 data restore remains unaccepted until real cdht and holder adapters run together.
 
 Wallet remains a borrowed owner capability supplied by accounting. There is no
-substitute proof success path. Global holder issuance/renewal and paired-PRF
-transfer retention remain owner/product seams, explicitly unresolved. No local
+substitute proof success path. Keys derives the global passport holder seed; Wallet holds the passport and
+operates Pseudonyms' holder side. These owner integrations are pending.
+
+The root derives from the first root passkey. Pairing transfers it and retains an
+authenticated copy wrapped under each new device's own passkey PRF in member
+records. Any registered passkey restores while those records remain; after
+record loss only the root passkey restores identity. Keys owns the lineage and
+wrapping operations; Vault wires their durable checkpoint with Records. Paired-root
+retention is required integration work, not an open retention policy. No local
 HTTP/WebAuthn/network code, raw root export, operator backup or duplicated domain
 state is introduced. `lock` wipes Keys and shared decrypted Storage immediately;
 existing shared container references then receive Locked from Storage.

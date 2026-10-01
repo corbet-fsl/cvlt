@@ -7,7 +7,8 @@ use cwst::backend::Backend;
 pub use storage::*;
 
 /// A restore lookup distinguishes authenticated absence from unavailable data.
-/// Neither outcome means that deterministic identity or membership ceased to exist.
+/// Neither outcome authorizes a replacement identity. Only the original root
+/// passkey deterministically restores identity when all member records are lost.
 pub enum RestoreLookup {
     /// Authenticated encrypted owner payload returned by the Records adapter.
     Present(Vec<u8>),
