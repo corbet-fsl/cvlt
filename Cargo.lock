@@ -255,7 +255,7 @@ dependencies = [
 [[package]]
 name = "cwst"
 version = "0.0.0"
-source = "git+https://github.com/corbet-foss/cwst?branch=main#1e3b964468aa9c18ab933842767008fadcbfc87e"
+source = "git+https://github.com/corbet-foss/cwst?branch=main#ec489110cf73368d69019745cdca6f9d8884f3c5"
 dependencies = [
  "atomicwrites",
  "blake3",
