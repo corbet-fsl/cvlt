@@ -37,7 +37,7 @@ jobs:
           node --test .github/scripts/test-auto-merge.mjs
           python3 .github/scripts/test-coverage.py
           rustc --version --verbose
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dependency-lock
           path: Cargo.lock
@@ -52,7 +52,7 @@ jobs:
         run: |
           cargo fmt --all
           git diff > formatting.patch
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always() && steps.format.outcome == 'failure'
         with:
           name: formatting
@@ -115,7 +115,7 @@ jobs:
         run: cargo llvm-cov report --text --output-path coverage.txt --ignore-filename-regex '/tests/'
       - name: Enforce complete measured coverage
         run: python3 .github/scripts/check-coverage.py coverage.lcov coverage.json coverage.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage
@@ -178,7 +178,7 @@ jobs:
         run: cargo llvm-cov report --target wasm32-unknown-unknown --text --output-path wasm-coverage.txt --ignore-filename-regex '/tests/'
       - name: Enforce actual browser Rust coverage
         run: python3 .github/scripts/check-coverage.py wasm-coverage.lcov wasm-coverage.json wasm-coverage.txt wasm
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: wasm-coverage
