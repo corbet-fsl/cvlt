@@ -12,6 +12,8 @@ include = ["Cargo.toml", "src/**", "README.md", "LICENSE.md", "docs/**"]
 
 [lib]
 crate-type = ["rlib"]
+# All behavior vectors are integration tests; there is no separate unit harness.
+test = false
 
 [dependencies]
 ckmg = { git = "https://github.com/corbet-foss/ckmg", branch = "main" }
@@ -22,8 +24,12 @@ zeroize = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 futures-executor = "0.3"
-wasm-bindgen-test = "0.3"
+wasm-bindgen-test = "0.3.79"
 
 [lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(owned_browser_coverage)"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+browser-coverage-runtime = { path = ".github/coverage-runtime" }

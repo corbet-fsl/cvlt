@@ -1,42 +1,140 @@
-"""Gate LLVM line and branch evidence with exact, documented unreachable lines."""
-import json, sys
+#!/usr/bin/env python3
+"""Require all emitted source lines and branches from the same LLVM execution."""
+import json
+from collections import Counter
+import sys
 from pathlib import Path
 
-exclusions = json.loads(Path('.github/coverage-exclusions.json').read_text())
-allowed = {}
-for entry in exclusions:
-    path, line = entry['file'], entry['line']
-    assert entry['reason'] and entry['evidence'], 'exclusion requires a rationale and evidence'
-    source = Path(path).read_text().splitlines()
-    assert source[line - 1].strip() == entry['source'], 'exclusion source moved; review it again'
-    if (sys.argv[2] if len(sys.argv) > 2 else "native") in entry.get("targets", ["native", "wasm"]):
-        allowed[(path, line)] = entry
-seen = set()
-lines = branches = hit_lines = hit_branches = 0
-misses = []
-file = None
-for record in Path(sys.argv[1]).read_text().splitlines():
-    if record.startswith('SF:'):
-        name = record[3:]
-        file = 'src/' + name.split('/src/', 1)[1] if '/src/' in name else name
-    elif record.startswith('DA:'):
-        line, count = map(int, record[3:].split(',')[:2])
-        key = (file, line)
-        if key in allowed:
-            seen.add(key)
-            assert count == 0, 'formerly unreachable line was exercised; remove its exclusion'
-            print('Unreachable:', file, line, allowed[key]['reason'])
+
+def check(lcov, raw_json, root, allowed=None):
+    allowed = {} if allowed is None else allowed
+    root = Path(root).resolve()
+
+    def source_path(value):
+        path = Path(value).resolve().relative_to(root)
+        if path.suffix != '.rs' or 'tests' in path.parts or 'target' in path.parts:
+            raise ValueError(f'Unexpected production source: {path}')
+        return str(path)
+
+    if raw_json.get('type') != 'llvm.coverage.json.export' or not raw_json.get('data'):
+        raise ValueError('Missing companion raw LLVM JSON')
+    expected = {}
+    for unit in raw_json['data']:
+        for item in unit['files']:
+            path = source_path(item['filename'])
+            if path in expected:
+                raise ValueError('Duplicate companion production file')
+            expected[path] = item
+    if not expected:
+        raise ValueError('Empty production file inventory')
+    files, lines, branches = set(), {}, {}
+    current = None
+    summaries = {}
+
+    def finish():
+        nonlocal current
+        if current is None:
+            raise ValueError('Unexpected end of record')
+        local_branches = [count for (path, _, _, _), count in branches.items() if path == current]
+        # LLVM's LF/LH and BRF/BRH summaries can count generic copies that
+        # its merged DA/BRDA records do not. Check those summaries against the
+        # companion export, but gate every emitted source counter below.
+        summary = expected[current]['summary']
+        locations = {tuple(branch[:4]) for branch in expected[current]['branches']}
+        expected_counts = Counter(location[0] for location in locations)
+        actual_counts = Counter(line for (path, line, _, _) in branches if path == current)
+        if actual_counts != {line: 2 * count for line, count in expected_counts.items()}:
+            raise ValueError('Missing emitted branch locations')
+        for key, metric, field in [('LF', 'lines', 'count'), ('LH', 'lines', 'covered'),
+                                  ('BRF', 'branches', 'count'), ('BRH', 'branches', 'covered')]:
+            count = summary[metric][field]
+            if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+                raise ValueError('Invalid raw JSON summary')
+            if key.startswith('BR') and not local_branches and count == 0 and key not in summaries:
+                continue
+            if summaries.get(key) != count:
+                raise ValueError(f'Inconsistent {key} for {current}')
+        current = None
+
+    for record in lcov.splitlines():
+        if not record:
             continue
-        lines += 1
-        hit_lines += count > 0
-        if count == 0:
-            misses.append(f'{file}:{line}')
-    elif record.startswith('BRDA:'):
-        parts = record[5:].split(',')
-        branches += 1
-        hit_branches += parts[3] != '-' and int(parts[3]) > 0
-        if parts[3] == '-' or int(parts[3]) == 0:
-            misses.append(f'{file}:{parts[0]} branch {parts[1]}:{parts[2]}')
-assert seen == allowed.keys(), 'an exclusion is absent from LLVM evidence'
-print(f'Reachable lines: {hit_lines}/{lines}; branches: {hit_branches}/{branches}')
-assert lines > 0 and branches > 0 and not misses, '\n'.join(misses)
+        if record.startswith('SF:'):
+            if current is not None:
+                raise ValueError('Unterminated source record')
+            current = source_path(record[3:])
+            if current in files:
+                raise ValueError('Duplicate source record')
+            files.add(current)
+            summaries = {}
+        elif record == 'end_of_record':
+            finish()
+        elif record.startswith('DA:'):
+            number, count, *_ = record[3:].split(',')
+            key = (current, int(number))
+            if current is None or int(number) <= 0 or key in lines or int(count) < 0:
+                raise ValueError('Invalid or duplicate line record')
+            lines[key] = int(count)
+        elif record.startswith('BRDA:'):
+            number, block, branch, count = record[5:].split(',')
+            key = (current, int(number), int(block), int(branch))
+            if current is None or min(key[1:]) < 0 or key[1] == 0 or key in branches:
+                raise ValueError('Invalid or duplicate branch record')
+            value = 0 if count == '-' else int(count)
+            if value < 0:
+                raise ValueError('Negative branch count')
+            branches[key] = value
+        elif record.split(':', 1)[0] in ('LF', 'LH', 'BRF', 'BRH'):
+            key, value = record.split(':', 1)
+            if current is None or key in summaries or int(value) < 0:
+                raise ValueError('Invalid or duplicate summary')
+            summaries[key] = int(value)
+        elif not record.startswith(('TN:', 'FN:', 'FNDA:', 'FNF:', 'FNH:')):
+            raise ValueError(f'Unexpected LCOV record: {record}')
+    if current is not None or files != set(expected) or not lines:
+        raise ValueError('Incomplete or empty source coverage inventory')
+    if not allowed.keys() <= lines.keys():
+        raise ValueError('Missing exclusion anchor in measured source')
+    if any((key[0], key[1]) in allowed for key in branches):
+        raise ValueError('Line-only exclusion contains a branch')
+    for key in allowed:
+        if lines[key] != 0:
+            raise ValueError('Formerly unreachable line was exercised; remove its exclusion')
+    measured = {key: count for key, count in lines.items() if key not in allowed}
+    if not measured:
+        raise ValueError('Empty reachable source coverage')
+    missing_lines = [key for key, count in measured.items() if count == 0]
+    missing_branches = [key for key, count in branches.items() if count == 0]
+    print(f'lines: {len(measured) - len(missing_lines)}/{len(measured)}; exclusions: {len(allowed)}')
+    print(f'branches: {len(branches) - len(missing_branches)}/{len(branches)}')
+    if missing_lines or missing_branches:
+        raise ValueError(f'Uncovered source lines: {missing_lines}; branches: {missing_branches}')
+
+
+def exclusions(root, target):
+    allowed = {}
+    for item in json.loads((root / '.github/coverage-exclusions.json').read_text()):
+        path, line = item['file'], item['line']
+        source = (root / path).resolve()
+        source.relative_to(root.resolve())
+        if (not path.startswith('src/') or not isinstance(line, int) or line < 1
+                or not item['reason'] or not item['evidence']
+                or source.read_text().splitlines()[line - 1].strip() != item['source']):
+            raise ValueError('Coverage exclusion no longer matches documented source')
+        if target in item.get('targets', ['native', 'wasm']):
+            if (path, line) in allowed:
+                raise ValueError('Duplicate coverage exclusion')
+            allowed[path, line] = item['reason']
+    return allowed
+
+
+if __name__ == '__main__':
+    try:
+        root = Path.cwd()
+        target = sys.argv[3] if len(sys.argv) > 3 else 'native'
+        if target not in ('native', 'wasm'):
+            raise ValueError('Unknown coverage target')
+        check(Path(sys.argv[1]).read_text(), json.loads(Path(sys.argv[2]).read_text()),
+              root, exclusions(root, target))
+    except (ValueError, KeyError, TypeError, OSError, IndexError) as error:
+        sys.exit(f'Coverage gate: {error}')
