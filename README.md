@@ -2,42 +2,25 @@
 
 ## Scope
 
-**Purpose and home.** The member's safe on the device, under `cmsg → cvlt`: wire
-Keys, Storage, Records and Wallet, open through the passkey PRF handover, and lend
-operations rather than roots.
+### Purpose
 
-**Owns.** Capability wiring of `ckmg`, `cwst`, `cdht` and `cwlt`, the sole client
-storage connection, and their shared `cwst` transaction boundary. Vault performs
-the consume-only, non-serializable, zeroizing Passkeys-to-Keys handover and restore
-orchestration. Web isolation uses `vault.<baseDomain>` with proof work in a worker
-inside that iframe; the door includes that origin and pins its RP ID.
+The member's safe on the device: it wires Keys (`ckmg`), Storage (`cwst`), Records (`cdht`) and Wallet (`cwlt`), opens when the passkey PRF secret arrives, and hands out operations, never secret roots.
 
-**Never.** Exposes root, holder or wrapping secrets; implements operator recovery,
-network code, domain conflict rules, a second wallet or device roster; joins
-community stores; infers absence or creates an identity during restore. Keys owns
-lineage and derives the passport holder seed. Wallet holds the passport and makes
-presentations with Pseudonyms' holder engine.
+### Owns
 
-**States and ports.** Derived Locked, Ready, Restoring, Unavailable or Unrecoverable.
-Missing PRF leaves the vault Locked independently of server sign-in. The implemented
-ports lend Keys, shared Storage, staged compound batches, Records lookup and Wallet,
-and provide `lock`. Restore distinguishes Present, KnownAbsent and Unavailable.
-Full unlock/restore wiring depends on the corresponding owner capabilities.
+Capability wiring of `ckmg`, `cwst`, `cdht` and `cwlt` with one shared transaction boundary for cross-owner checkpoints. Sole holder of the client storage connection, so all other member-side state goes through the vault. The one handover of the PRF secret from Passkeys into Keys, consume-only and zeroizing. Restore orchestration with three outcomes: Present, KnownAbsent, Unavailable. On the web, runs isolated with heavy proof work in a worker inside that isolation.
 
-**Restore invariant.** Every enrolled passkey has equal capabilities. A random
-common identity root is retained in member DHT records as a separate authenticated
-wrapped copy under each passkey. Active devices refresh their records. There is
-no privileged first passkey or operator-held copy. If long absence and loss of all
-local copies also leave no DHT records, identity and data can both be lost, with
-the same implications for every passkey. Unavailable data never authorizes a
-replacement identity. Keys and Records own the wrapping and discovery formats;
-Vault wires their capabilities without inventing a recovery mechanism.
+### Never
 
-**Test obligations.** Native and browser storage contracts, locked refusal,
-authenticated restore records, and failures at every combined owner checkpoint
-boundary. `lock` wipes Keys and shared decrypted Storage. Full active-member
-restore requires real Records and Wallet, with unavailable replicas kept distinct
-from authenticated absence; adapter coverage is not that end-to-end evidence.
+Exposes raw secrets, root secrets, or wrapping secrets to callers. Recovers through operator identity or any path beyond the passkey. Contains network code. Joins stores from different communities. Resolves domain conflicts or keeps a second wallet or device roster. Infers absence from unavailable data or creates a new identity during restore.
+
+### States
+
+Derived Locked, Ready, Restoring, Unavailable, or Unrecoverable. Locked with PRF unavailable when a sign-in yields no PRF secret.
+
+### Test obligations
+
+Same facade contract against native and browser stores, with locked access refused. Restore verifies records before use; missing replicas report Unavailable, never a new account. A combined checkpoint across owners survives injected failures at every point. Lock wipes Keys and decrypted storage together. End-to-end restore with Records and Wallet. Identical test vectors on native and browser builds, explicit states with injected clock, randomness, storage and network, full line and branch coverage with real round trips and injected delay, loss, duplication, cancellation, clock regression, corruption and storage conflicts, atomic publication where unknown outcomes reconcile without regenerating keys, proofs or effects, strict per-community isolation, and bounded work with identifiers, plaintext and secrets omitted from errors.
 
 ## Implementation boundaries
 
