@@ -30,6 +30,10 @@ impl PasskeyUnlock {
     pub fn record_initializer(&self) -> Result<ckmg::NativeRecordInitializer, PasskeyError> {
         ckmg::passkey::native_passkey_record(&self.prf, &self.scope).map_err(PasskeyError::Keys)
     }
+    #[cfg(all(feature = "native-records", not(target_arch = "wasm32")))]
+    pub(crate) fn local_locator(&self) -> Result<ckmg::Locator, PasskeyError> {
+        ckmg::passkey::vault_location(&self.prf, &self.scope).map_err(PasskeyError::Keys)
+    }
     /// Consume the browser/native secret entirely inside trusted Vault Rust.
     pub fn import(secret: cpky::UnlockSecret, scope: &str) -> Result<Self, PasskeyError> {
         let prf = secret

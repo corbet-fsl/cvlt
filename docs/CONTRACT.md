@@ -49,3 +49,21 @@ state is introduced. `lock` wipes Keys and shared decrypted Storage immediately;
 existing shared container references then receive Locked from Storage.
 
 With the private integration passkeys feature, PasskeyUnlock consumes cpky UnlockSecret entirely inside Rust, opens existing Storage under the same authenticated scope, and consumes itself to unlock Keys. Absence is never automatic creation. Explicit new-member create_storage/create_scope remain separate and require the real Keys Authority. No Debug, serde or raw PRF accessor is available. The optional dependency is the temporary manager-authorized private cpky logical file source; it is not public-main readiness. A maintained software-authenticator PRF vector tests synchronized-passkey storage continuity and wrong-key/scope/absence refusal; this is not actual platform WebAuthn or accepted G3.
+
+Native PasskeyRecords opens only through the actual cmsh VeilidRecords factory using PasskeyUnlock-derived opaque DFLT(1) custody. Subkey zero contains versioned cvlt passkey-root framing with an opaque existing PRF-wrapped payload, compressed by cprz then Padme-padded before native VLD0 encryption. It rejects a packed value larger than one upstream subkey; no truncation/pruning/chunk protocol is invented. Publish consumes an owner-selected sequence from a durable outbox; Queued/Replicated/Conflict preserve their original owner meaning. Lookup refreshes the actual record, preserves an observed authenticated sequence floor even for malformed owner content, and maps missing/unreachable/unverifiable reads to Unavailable, never KnownAbsent. Local checkpoint Locator selects the already-opened capability only; it is never reinterpreted as a Veilid record key. This transport observation is not globally-current lineage authority. Close the capability on lock/revocation. Real native retention/G3 composition remains unqualified.
+
+
+Native retained-value startup uses one original Mesh runtime in this order:
+`VeilidRuntime::prepare(config, limits).await`, `runtime.records(maximum)`,
+`PasskeyRecords::open(&unlock, &factory).await`, then `publish(original_sequence,
+original_wrapped_checkpoint).await` for actual committed outbox values, then
+`runtime.attach().await`. `VeilidRuntime::start` attaches immediately and therefore
+is only appropriate when startup staging is unnecessary. Vault opens its capability
+in the supplied factory and never creates a parallel core or bypasses attach.
+The original engine serializes staging with first attach and permanently closes
+that window before attachment begins, including failure or cancellation. Subsequent
+publication uses its actual online transaction; no offline retry/fallback exists.
+Queued means staged native persistence only, never replication or G3. Production
+must retain original outbox and reconcile conflicts/uncertain results before retry.
+The native software-authenticator/actual-core staging/reopen/failed-attach refusal
+fixture is source-only until the corrected cvln/cdht/cmsh mains qualify.

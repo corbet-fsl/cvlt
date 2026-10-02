@@ -12,24 +12,30 @@ include = ["Cargo.toml", "src/**", "README.md", "LICENSE.md", "docs/**"]
 
 [lib]
 crate-type = ["rlib"]
-# All behavior vectors are integration tests; there is no separate unit harness.
-test = false
+# Native private layout decoder tests run in the unit harness too.
+test = true
 
 [features]
 default = []
 passkeys = ["dep:cpky"]
-native-records = ["passkeys", "ckmg/native-records"]
+native-records = ["passkeys", "ckmg/native-records", "dep:cmsh", "dep:cdht", "dep:cprz", "dep:cprz-pad"]
 
 [dependencies]
-cpky = { git = "file:///cmty-private/cpky", branch = "main", optional = true }
+cpky = { git = "https://github.com/corbet-foss/cpky", branch = "main", optional = true }
 ckmg = { git = "https://github.com/corbet-foss/ckmg", branch = "main" }
 cwst = { git = "https://github.com/corbet-foss/cwst", branch = "main" }
 futures = "0.3"
 blake3 = "1"
 zeroize = { version = "1", features = ["derive"] }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cmsh = { git = "https://github.com/corbet-libs/cmsh", branch = "main", features = ["veilid"], optional = true }
+cdht = { git = "https://github.com/corbet-foss/cdht", branch = "main", optional = true }
+cprz = { git = "https://github.com/corbet-foss/cprz", branch = "main", default-features = false, optional = true }
+cprz-pad = { git = "https://github.com/corbet-foss/cprz", branch = "main", optional = true }
+
 [dev-dependencies]
-cpky = { git = "file:///cmty-private/cpky", branch = "main", features = ["test-authenticator"] }
+cpky = { git = "https://github.com/corbet-foss/cpky", branch = "main", features = ["test-authenticator"] }
 serde_json = "1"
 serde = "1"
 base64 = "0.22"
@@ -41,6 +47,10 @@ wasm-bindgen-test = "0.3.79"
 unsafe_code = "forbid"
 missing_docs = "warn"
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(owned_browser_coverage)"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tempfile = "3"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 browser-coverage-runtime = { path = ".github/coverage-runtime" }

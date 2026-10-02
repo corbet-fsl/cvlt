@@ -418,6 +418,73 @@ mod passkey_handover {
         };
         PasskeyUnlock::import(secret, scope).unwrap()
     }
+    // Transport-layout qualification only: these opaque bytes do not claim a
+    // verified common root or active-passkey G3. Production supplies the retained
+    // Keys checkpoint from its actual committed outbox.
+    #[cfg(all(feature = "native-records", not(target_arch = "wasm32")))]
+    #[tokio::test]
+    async fn native_root_staging_precedes_the_only_attach_attempt() {
+        use std::{num::NonZeroUsize, time::Duration};
+        let mut client = client();
+        let (_, secret) = client
+            .register_member(creation())
+            .await
+            .unwrap()
+            .into_parts();
+        let unlock = PasskeyUnlock::import(secret, "garden").unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let mut config = cmsh::VeilidConfig::new(
+            "vault_test",
+            "staging",
+            "org",
+            Some(directory.path().to_str().unwrap()),
+            None,
+        );
+        config.protected_store.always_use_insecure_storage = true;
+        config.network.routing_table.bootstrap.clear();
+        config.network.routing_table.bootstrap_keys.clear();
+        let runtime = cmsh::VeilidRuntime::prepare(
+            config,
+            cmsh::VeilidLimits {
+                queued_messages: NonZeroUsize::new(8).unwrap(),
+                listeners: NonZeroUsize::new(2).unwrap(),
+                deadline: Duration::from_secs(2),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(!runtime.ready().await.unwrap());
+        let factory = runtime.records(NonZeroUsize::new(1).unwrap()).unwrap();
+        let mut record = cvlt::PasskeyRecords::open(&unlock, &factory).await.unwrap();
+        let wrapped = b"opaque retained checkpoint layout fixture";
+        assert!(matches!(
+            record.publish(7, wrapped).await.unwrap(),
+            cdht::runtime::Publication::Queued
+        ));
+        assert!(matches!(
+            record.publish(7, b"altered checkpoint").await.unwrap(),
+            cdht::runtime::Publication::Conflict(_)
+        ));
+        assert!(matches!(
+            record.publish(6, wrapped).await,
+            Err(cvlt::RecordError::Invalid)
+        ));
+        record.close().await.unwrap();
+        let unlock = sign_in(&mut client, "garden").await;
+        let mut record = cvlt::PasskeyRecords::open(&unlock, &factory).await.unwrap();
+        // Same passkey reopens the original full key/read custody and bytes.
+        assert!(matches!(
+            record.publish(7, wrapped).await.unwrap(),
+            cdht::runtime::Publication::Queued
+        ));
+        // No bootstrap exists in this deliberately offline original-core fixture.
+        // Once attach is attempted, the runtime must never reopen offline writes.
+        assert!(runtime.attach().await.is_err());
+        assert!(record.publish(8, wrapped).await.is_err());
+        record.close().await.unwrap();
+        runtime.shutdown().await;
+    }
+
     shared!(
         maintained_passkey_opens_same_storage_after_device_restart,
         {
@@ -530,3 +597,62 @@ mod passkey_handover {
         }
     );
 }
+
+shared!(
+    keys_reads_reenter_the_original_store_without_skipping_fences,
+    {
+        use futures::FutureExt;
+        let prf = PrfOutput::from_bytes(&[4; 32]).unwrap();
+        let cipher = store_cipher(&prf, "garden").unwrap();
+        let locator = vault_location(&prf, "garden").unwrap();
+        let backend = cwst::backend::Memory::new();
+        let storage = shared_store(
+            cwst::Store::create(backend, &cipher, "garden")
+                .await
+                .unwrap(),
+        );
+        let mut keys = KeyStore::new(storage.clone(), "garden").unwrap();
+        let mut original = storage.lock().await;
+        // Old KeyStore::load would remain Pending while this SAME guard is held.
+        assert_eq!(keys.load(&locator).now_or_never(), Some(Ok(None)));
+        original
+            .commit(
+                0,
+                [1; 32],
+                &[cwst::Change::Put {
+                    owner: "keys",
+                    key: locator.as_bytes(),
+                    value: b"first committed ciphertext",
+                }],
+                &[],
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            keys.load(&locator).now_or_never(),
+            Some(Ok(Some(b"first committed ciphertext".to_vec())))
+        );
+        original
+            .commit(
+                1,
+                [2; 32],
+                &[cwst::Change::Put {
+                    owner: "keys",
+                    key: locator.as_bytes(),
+                    value: b"next committed ciphertext",
+                }],
+                &[],
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            keys.load(&locator).now_or_never(),
+            Some(Ok(Some(b"next committed ciphertext".to_vec())))
+        );
+        original.lock_in_place();
+        assert_eq!(
+            keys.load(&locator).now_or_never(),
+            Some(Err(ckmg::Error::Unavailable))
+        );
+    }
+);

@@ -3,6 +3,10 @@
 #![forbid(unsafe_code)]
 #[cfg(feature = "passkeys")]
 mod passkeys;
+#[cfg(all(feature = "native-records", not(target_arch = "wasm32")))]
+mod records;
+#[cfg(all(feature = "native-records", not(target_arch = "wasm32")))]
+pub use records::{PasskeyRecords, RecordError};
 mod storage;
 use ckmg::{Authority, Clock, Entropy, Locator};
 use cwst::backend::Backend;

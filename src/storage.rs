@@ -19,11 +19,31 @@ impl std::fmt::Display for Error {
     }
 }
 impl std::error::Error for Error {}
-/// One async mutex over the authoritative checkpoint, usable on native and browser.
-pub type SharedStore<B> = Rc<futures::lock::Mutex<cwst::Store<B>>>;
+/// One authoritative checkpoint and its original Keys-only read capability.
+/// Reads never re-lock the outer transaction mutex; Storage revokes them before
+/// yielding a pending write and publishes only a completed authenticated CAS.
+pub struct StoreCell<B: Backend> {
+    store: futures::lock::Mutex<cwst::Store<B>>,
+    keys: cwst::ReadHandle,
+}
+impl<B: Backend> StoreCell<B> {
+    /// Borrow the original Store exclusively for an owner transaction.
+    pub async fn lock(&self) -> futures::lock::MutexGuard<'_, cwst::Store<B>> {
+        self.store.lock().await
+    }
+}
+/// Shared ownership of one authoritative checkpoint, usable on native and browser.
+pub type SharedStore<B> = Rc<StoreCell<B>>;
 /// Wrap one already-authenticated checkpoint; no second domain snapshot is made.
+/// Replacing this Store requires a new SharedStore and new Keys reconciliation.
 pub fn shared_store<B: Backend>(store: cwst::Store<B>) -> SharedStore<B> {
-    Rc::new(futures::lock::Mutex::new(store))
+    let keys = store
+        .read_handle("keys")
+        .expect("fixed Keys owner is valid");
+    Rc::new(StoreCell {
+        store: futures::lock::Mutex::new(store),
+        keys,
+    })
 }
 
 /// Opaque prepared owner mutation. None deletes; Some replaces. Secrets wipe on drop.
@@ -106,17 +126,16 @@ impl<B: Backend> KeyStore<B> {
 }
 impl<B: Backend> SecureStore for KeyStore<B> {
     async fn load(&mut self, location: &Locator) -> Result<Option<Vec<u8>>, ckmg::Error> {
-        let store = self.storage.lock().await;
-        if !store.is_scope(&self.scope) {
+        if !self.storage.keys.is_scope(&self.scope) {
             return Err(ckmg::Error::Unauthorized);
         }
-        let bytes = store
-            .read("keys", location.as_bytes())
-            .map_err(|_| ckmg::Error::Unavailable)?;
-        if bytes.is_some_and(|v| v.len() > ckmg::MAX_CHECKPOINT_BYTES) {
-            return Err(ckmg::Error::Limit);
-        }
-        Ok(bytes.map(<[u8]>::to_vec))
+        self.storage
+            .keys
+            .read(location.as_bytes(), ckmg::MAX_CHECKPOINT_BYTES)
+            .map_err(|error| match error {
+                cwst::Error::TooLarge => ckmg::Error::Limit,
+                _ => ckmg::Error::Unavailable,
+            })
     }
     async fn compare_exchange(
         &mut self,
