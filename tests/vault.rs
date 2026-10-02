@@ -373,3 +373,160 @@ shared!(unknown_outcome_is_reconciled_and_locked_reads_refuse, {
 fn profiling_runtime_is_linked() {
     let _ = browser_coverage_runtime::__owned_test_module_signature();
 }
+
+#[cfg(feature = "passkeys")]
+mod passkey_handover {
+    use super::*;
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    use cpky::{
+        Client, Context, VaultOutcome,
+        software::{SoftwareAuthenticator, TestConfiguration},
+    };
+    use cvlt::{PasskeyError, PasskeyUnlock};
+    use serde_json::json;
+    static_assertions::assert_not_impl_any!(PasskeyUnlock: std::fmt::Debug, Clone, serde::Serialize);
+    const ORIGIN: &str = "https://vault.garden.example.com";
+    const RP: &str = "garden.example.com";
+    fn client() -> Client<SoftwareAuthenticator> {
+        Client::new(
+            Context::new(ORIGIN, RP).unwrap(),
+            SoftwareAuthenticator::new(
+                ORIGIN,
+                TestConfiguration {
+                    user_verified: true,
+                    prf: true,
+                    evaluate_at_create: false,
+                },
+            )
+            .unwrap(),
+        )
+    }
+    fn creation() -> serde_json::Value {
+        json!({"publicKey":{
+            "rp":{"id":RP,"name":"Synthetic community"},
+            "user":{"id":URL_SAFE_NO_PAD.encode([17;16]),"name":"synthetic-member","displayName":"Test member"},
+            "challenge":URL_SAFE_NO_PAD.encode([41;32]),
+            "pubKeyCredParams":[{"type":"public-key","alg":-7}],
+            "authenticatorSelection":{"residentKey":"required","requireResidentKey":true,"userVerification":"required"},
+            "timeout":42000,"excludeCredentials":[],"attestation":"none"
+        }})
+    }
+    async fn sign_in(client: &mut Client<SoftwareAuthenticator>, scope: &str) -> PasskeyUnlock {
+        let (_, outcome) = client.sign_in(json!({"publicKey":{"challenge":URL_SAFE_NO_PAD.encode([55;32]),"rpId":RP,"userVerification":"required","allowCredentials":[]}})).await.unwrap().into_parts();
+        let VaultOutcome::Ready(secret) = outcome else {
+            panic!("test authenticator PRF unavailable")
+        };
+        PasskeyUnlock::import(secret, scope).unwrap()
+    }
+    shared!(
+        maintained_passkey_opens_same_storage_after_device_restart,
+        {
+            let mut first = client();
+            let (_, secret) = first
+                .register_member(creation())
+                .await
+                .unwrap()
+                .into_parts();
+            let unlock = PasskeyUnlock::import(secret, "garden").unwrap();
+            let backend = cwst::backend::Memory::new();
+            assert!(matches!(
+                unlock.open_storage(backend.clone()).await,
+                Err(PasskeyError::Storage(cwst::Error::NotInitialized))
+            ));
+            let mut store = unlock.create_storage(backend.clone()).await.unwrap();
+            assert!(matches!(
+                unlock.create_storage(backend.clone()).await,
+                Err(PasskeyError::Storage(cwst::Error::AlreadyInitialized))
+            ));
+            store
+                .commit(
+                    0,
+                    [1; 32],
+                    &[cwst::Change::Put {
+                        owner: "history",
+                        key: b"retained",
+                        value: b"actual encrypted checkpoint",
+                    }],
+                    &[],
+                )
+                .await
+                .unwrap();
+            store.lock();
+            drop(unlock);
+            let authenticator = first.into_authenticator();
+            let mut restarted = Client::new(
+                Context::new(ORIGIN, RP).unwrap(),
+                authenticator.synced_test_device(),
+            );
+            let unlock = sign_in(&mut restarted, "garden").await;
+            let store = unlock.open_storage(backend.clone()).await.unwrap();
+            assert_eq!(
+                store.read("history", b"retained").unwrap(),
+                Some(b"actual encrypted checkpoint".as_slice())
+            );
+            let mut vault = cvlt::Vault::new(
+                store,
+                "garden",
+                Clock,
+                ckmg::SystemEntropy,
+                UnavailableAuthority,
+                UnavailableRecords,
+                WalletNotIntegrated,
+            )
+            .unwrap();
+            // Storage continuity does not fabricate a Keys checkpoint or G3 authority.
+            assert!(matches!(
+                unlock.unlock(vault.keys()).await,
+                Err(PasskeyError::Keys(ckmg::Error::MissingCheckpoint))
+            ));
+            let unlock = sign_in(&mut restarted, "garden").await;
+            assert!(matches!(
+                unlock
+                    .create_scope(
+                        vault.keys(),
+                        ckmg::Binding::new("other", "member").unwrap(),
+                        ckmg::DeviceInfo::new("test", b"credential").unwrap(),
+                        b"unverified"
+                    )
+                    .await,
+                Err(PasskeyError::Keys(ckmg::Error::Unauthorized))
+            ));
+            let unlock = sign_in(&mut restarted, "garden").await;
+            assert!(matches!(
+                unlock
+                    .create_scope(
+                        vault.keys(),
+                        ckmg::Binding::new("garden", "member").unwrap(),
+                        ckmg::DeviceInfo::new("test", b"credential").unwrap(),
+                        b"unverified"
+                    )
+                    .await,
+                Err(PasskeyError::Keys(ckmg::Error::Unavailable))
+            ));
+            let other_scope = sign_in(&mut restarted, "other").await;
+            assert!(matches!(
+                other_scope.open_storage(backend.clone()).await,
+                Err(PasskeyError::Storage(cwst::Error::Unlock))
+            ));
+            let mut unrelated = client();
+            let (_, secret) = unrelated
+                .register_member(creation())
+                .await
+                .unwrap()
+                .into_parts();
+            let wrong_key = PasskeyUnlock::import(secret, "garden").unwrap();
+            assert!(matches!(
+                wrong_key.open_storage(backend).await,
+                Err(PasskeyError::Storage(cwst::Error::Unlock))
+            ));
+            let (_, secret) = unrelated.sign_in(json!({"publicKey":{"challenge":URL_SAFE_NO_PAD.encode([56;32]),"rpId":RP,"userVerification":"required","allowCredentials":[]}})).await.unwrap().into_parts();
+            let VaultOutcome::Ready(secret) = secret else {
+                panic!("PRF unavailable")
+            };
+            assert!(matches!(
+                PasskeyUnlock::import(secret, ""),
+                Err(PasskeyError::Keys(_))
+            ));
+        }
+    );
+}

@@ -15,7 +15,12 @@ crate-type = ["rlib"]
 # All behavior vectors are integration tests; there is no separate unit harness.
 test = false
 
+[features]
+default = []
+passkeys = ["dep:cpky"]
+
 [dependencies]
+cpky = { git = "file:///cmty-private/cpky", branch = "main", optional = true }
 ckmg = { git = "https://github.com/corbet-foss/ckmg", branch = "main" }
 cwst = { git = "https://github.com/corbet-foss/cwst", branch = "main" }
 futures = "0.3"
@@ -23,6 +28,11 @@ blake3 = "1"
 zeroize = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
+cpky = { git = "file:///cmty-private/cpky", branch = "main", features = ["test-authenticator"] }
+serde_json = "1"
+serde = "1"
+base64 = "0.22"
+static_assertions = "1"
 futures-executor = "0.3"
 wasm-bindgen-test = "0.3.79"
 

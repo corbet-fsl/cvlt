@@ -47,3 +47,5 @@ Vault only composes its eventual owner checkpoints and outputs atomically. No lo
 HTTP/WebAuthn/network code, raw root export, operator backup or duplicated domain
 state is introduced. `lock` wipes Keys and shared decrypted Storage immediately;
 existing shared container references then receive Locked from Storage.
+
+With the private integration passkeys feature, PasskeyUnlock consumes cpky UnlockSecret entirely inside Rust, opens existing Storage under the same authenticated scope, and consumes itself to unlock Keys. Absence is never automatic creation. Explicit new-member create_storage/create_scope remain separate and require the real Keys Authority. No Debug, serde or raw PRF accessor is available. The optional dependency is the temporary manager-authorized private cpky logical file source; it is not public-main readiness. A maintained software-authenticator PRF vector tests synchronized-passkey storage continuity and wrong-key/scope/absence refusal; this is not actual platform WebAuthn or accepted G3.

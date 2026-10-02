@@ -1,9 +1,13 @@
 //! Vault composes Keys, encrypted Storage and injected Records/Wallet owners.
 //! It never duplicates their lineage, record, proof or accepted-state logic.
 #![forbid(unsafe_code)]
+#[cfg(feature = "passkeys")]
+mod passkeys;
 mod storage;
 use ckmg::{Authority, Clock, Entropy, Locator};
 use cwst::backend::Backend;
+#[cfg(feature = "passkeys")]
+pub use passkeys::{PasskeyError, PasskeyUnlock};
 pub use storage::*;
 
 /// A restore lookup distinguishes authenticated absence from unavailable data.
