@@ -24,6 +24,12 @@ pub struct PasskeyUnlock {
     scope: String,
 }
 impl PasskeyUnlock {
+    /// Initialize the exact passkey-owned DFLT(1) root record in Mesh's existing
+    /// native engine. Neither local checkpoint locators nor raw keys cross this port.
+    #[cfg(all(feature = "native-records", not(target_arch = "wasm32")))]
+    pub fn record_initializer(&self) -> Result<ckmg::NativeRecordInitializer, PasskeyError> {
+        ckmg::passkey::native_passkey_record(&self.prf, &self.scope).map_err(PasskeyError::Keys)
+    }
     /// Consume the browser/native secret entirely inside trusted Vault Rust.
     pub fn import(secret: cpky::UnlockSecret, scope: &str) -> Result<Self, PasskeyError> {
         let prf = secret
