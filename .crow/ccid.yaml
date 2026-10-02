@@ -9,6 +9,8 @@ variables:
   CI_TOOL_SHA256: {default: ""}
   CI_TOOL_BINARY: {default: ""}
   CI_TOOL_BINARY_SHA256: {default: ""}
+  SUPPLEMENT_SETUP: {default: ""}
+  SUPPLEMENT_SHA256: {default: ""}
   DEPENDENCY_SOURCE_ARCHIVE: {default: ""}
   DEPENDENCY_SOURCE_SHA256: {default: ""}
   CHECKS: {default: native}
@@ -38,6 +40,10 @@ steps:
         test -n "$CI_TOOL_BINARY_SHA256"
         printf '%s  %s\n' "$CI_TOOL_BINARY_SHA256" "$CI_TOOL_BINARY" | sha256sum --check --strict
         test "$("$CI_TOOL_BINARY" source-revision)" = "$CCID_REVISION"
+        test -n "$SUPPLEMENT_SETUP"
+        test -n "$SUPPLEMENT_SHA256"
+        printf '%s  %s\n' "$SUPPLEMENT_SHA256" "$SUPPLEMENT_SETUP" | sha256sum --check --strict
+        . "$SUPPLEMENT_SETUP"
         TMPDIR="$${TMPDIR:-/tmp}"
         export TMPDIR
         set -eu
