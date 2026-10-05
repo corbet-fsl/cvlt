@@ -22,8 +22,9 @@ this crate supplies no permissive implementation. Production authority is blocke
 on the identity owner's live passkey/membership adapter. Tests using a signed
 fixture lineage demonstrate composition mechanics only, never live authority.
 
-Records is an independent trusted port while cdht's owner completes its actual
-protocol adapter. Present means an authenticated encrypted record; KnownAbsent
+Records is an independent trusted port. `PasskeyRecords` forwards the original
+`cdht::runtime::Record` without another record engine or replica cache.
+Present means an authenticated encrypted record; KnownAbsent
 requires that owner's protocol evidence. Timeouts and unverifiable or incomplete
 knowledge are Unavailable. Vault never infers absence, calls create on restore,
 or interprets a lookup result as permission to mint a replacement identity. This port
@@ -56,3 +57,118 @@ mandatory before the Vault returns. On error or cancellation, the owned Store an
 Keys are dropped and their original secret owners wipe unlocked material; no
 accepted checkpoint mutation or output was prepared. This does not make missing
 production G3, equal-root replication or full restore composition available.
+
+`PreparedOpen` retains the consumed original opaque PRF during owner construction.
+Its local locator is distinct from the canonical network record key. With the
+native-records feature, `native_records` derives the original Keys passkey record
+initializer from the same PRF/scope and consumes it through the existing Mesh
+factory sharing the sole native runtime. No independent network is started here.
+The generic `PasskeyRecords::new` is a trusted composition boundary: its locator and
+authenticated record capability must belong to that same passkey/scope, never a
+caller-selected JSON association. Only the original DFLT(1) schema is accepted.
+
+`PasskeyRecords::checkpoint` forces `get(0, true)` in the original record engine.
+It preserves the original authenticated observation floor and decodes the existing
+passkey-root framing before returning the exact PRF-wrapped Keys bytes, canonical
+record key and record sequence. The floor is retained even for malformed owner
+bytes; this sequence is not a Keys local or lineage revision. Missing,
+offline, invalid or unavailable data never becomes KnownAbsent or an empty
+identity. The original native core refuses an offline forced read even when it
+retains valid local ciphertext; a non-refreshed cache is not current authority.
+Lookup performs no publication or restore installation. Native capability initialization may establish the original
+empty record descriptor, which proves no identity or authenticated data absence.
+
+`PreparedOpen::inspect_record` authenticates those exact retained bytes through
+the original Keys checkpoint decoder. `inspector` lends the original narrow
+wrapping capability to the trusted Authority for subsequent forced refreshes
+after preparation is consumed. Public lineage/device/revision/time/digest claims
+do not grant current membership or prove a globally latest lineage. The composer
+must join original current-lineage provenance, monotonic record observations,
+live authenticated passkey/device membership, the clock floor and owner intent.
+The inspector must be owned inside custody and dropped on invalidation; consuming
+`Vault::lock` drops Authority with Keys after wiping the shared Store. Independently
+retained inspectors are not revoked by locking another Keys instance.
+
+PasskeyRecords reuses the original `cvlt.passkey-root.v1` framing, `cprz` portable
+compression and Padme padding before the actual engine's VLD0 encryption.
+`publish` accepts the original owner-selected sequence and already-wrapped payload
+from a durable outbox. Queued, Replicated and Conflict remain original engine
+outcomes; none acknowledges an application operation or grants lineage authority.
+The original sequence floor refuses rollback. Native startup is prepare → publish
+retained committed values → attach; a failed/cancelled attach never permits an
+offline write fallback. `close` forwards actual native record shutdown.
+
+The canonical DFLT(1) subkey limit is 32 KiB, while Storage allows compound
+checkpoints up to 8 MiB. The original codec refuses payloads that cannot fit after
+packing; no alternate chunk format, truncation or pruning is introduced. This does
+not claim that a full compound checkpoint fits, restores or is replicated.
+Actual online forced reads, native/browser runtime composition and complete
+active-member restore remain acceptance obligations.
+
+
+`verify_lineage` joins the original Keys Receipt/device attestation and exact
+`Receipt::passkey_challenge` to the original Keyhole assertion verifier. The
+credential descriptor must come from `VerifiedCharter::passkey_binding`, which
+checks the original Policy signature, member mapping, policy epoch and current
+member/passkey revocations. The result borrows the actual current Charter and
+original receipt/binding; callers cannot construct, clone or deserialize the
+observation. Access checks its exclusive deadline and observation clock floor.
+In the live Foyer composition, verify and use this observation inside the
+synchronous current-Policy callback; reborrow and reverify after every await.
+
+This observation establishes one passkey-attested change only. It neither
+selects globally current lineage nor authorizes Keys, creates membership, proves
+Records freshness or opens custody. The original device roster/session checks,
+lineage predecessor/conflict rules, current checkpoint comparison and exact owner
+intent remain separate obligations. Original Keys same-epoch adoption permits
+only a higher revision with unchanged root/identity and a superset of devices;
+this verifier adds no general revision/tie comparator or winner cache.
+
+The server-backed native fixture creates an actual original Keys receipt through
+a fixture-only one-shot Create authority, obtains actual maintained-authenticator
+assertions and a registered SQL Keyhole descriptor, and signs original Charter
+publications and Policy binding bytes. It exercises only original cryptographic
+composition, including a valid assertion for a different challenge and actual
+server-revoked credential IDs. It does not stand in for live admission or a G3
+production Authority. Browser execution, retained publication/outbox integration,
+full coverage and end-to-end adoption remain pending.
+
+
+Public lineage evidence retention uses the original local Store boundary.
+`LineageEvidence::prepare` runs the original verifier synchronously under the
+current Policy borrow and returns a transient `PreparedLineageEvidence`. Its
+verification applies to preparation only; it carries no currentness across an
+await. Retained values loaded later cannot construct that preparation type or an
+Authority. `LineageEvidence::verify` must reborrow actual current Policy for use.
+
+`Vault::retain_lineage_evidence` snapshots the original Store version, reads the
+actual Keys pending Receipt, then requires the same Store version and exact
+Receipt at its separate Store transaction. It preserves Keys ciphertext, pending
+Receipt and every existing outbox value. The existing Batch requires a real Keys
+CAS, so it is not used to force a fake transition, and Keys::acknowledge is never
+called here. Original Store version/CAS checks fence concurrent writes. Once the
+write begins, cancellation or any failed completion locks Keys; original Storage
+also closes uncertain/cancelled reads before its backend await. Reopen actual
+backend bytes and reconcile the exact Store operation and values, without
+regenerating Keys changes or asserting an outcome from a timeout.
+
+The three local owner namespaces `lineage-receipt`, `lineage-assertion` and
+`lineage-binding` use the original Receipt operation as their record key. Receipt
+and Assertion use their original serde representations; binding bytes remain
+exactly the original signed COSE. All three are written atomically and have an
+aggregate 1 MiB limit. Partial, malformed, differently scoped or mismatched-key
+retained records are refused; stored assertions/bindings still require original
+cryptographic verification against current Policy. These are opaque domain-owned
+values inside the existing encrypted Store, not a DHT/wire bundle, publication
+format, accepted-lineage cache or a new transport. No outgoing output is invented
+or acknowledged. The returned original Store receipt proves local persistence
+only. Publication, actual transport acknowledgement and current-lineage/Authority
+composition remain separate unfinished work.
+
+Native test source retains genuine Keys/passkey/Charter evidence through the
+original atomic file backend. It exercises reopen/lost replies, cancellation
+before or after the real CAS, uncertain completion, an actual competing writer,
+unchanged Keys/output values, pending-receipt mismatch, incomplete/corrupt/oversize
+local values and fresh revocation/expiry refusal. Fault injection only delays or
+loses the original backend result; it never fabricates accepted custody/evidence.
+Native/browser execution and full coverage remain pending.

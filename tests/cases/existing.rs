@@ -27,7 +27,7 @@ type Passkeys = Client<SoftwareAuthenticator>;
 
 // The canonical Passkeys public fixture shape: actual maintained authenticator,
 // resident credential, real PRF evaluation. Synthetic user gesture, never browser proof.
-async fn passkeys() -> Passkeys {
+pub(super) async fn passkeys() -> Passkeys {
     let platform = SoftwareAuthenticator::new(
         ORIGIN,
         TestConfiguration {
@@ -49,7 +49,7 @@ async fn passkeys() -> Passkeys {
     }})).await.unwrap();
     client
 }
-async fn unlock(client: &mut Passkeys) -> UnlockSecret {
+pub(super) async fn unlock(client: &mut Passkeys) -> UnlockSecret {
     let authentication = client
         .sign_in(json!({"publicKey": {
             "challenge":URL_SAFE_NO_PAD.encode([55;32]),"rpId":RP,
@@ -106,6 +106,39 @@ async fn seed(backend: Memory, client: &mut Passkeys) {
     assert_eq!(store.version().unwrap(), 0);
     drop(store);
 }
+
+shared!(prepared_open_keeps_real_passkey_scope_and_consumption, {
+    let mut client = passkeys().await;
+    assert_eq!(
+        cvlt::PreparedOpen::new(unlock(&mut client).await, "").unwrap_err(),
+        cvlt::OpenError::Keys(ckmg::Error::Encoding)
+    );
+    let prepared = cvlt::PreparedOpen::new(unlock(&mut client).await, SCOPE).unwrap();
+    let same = cvlt::PreparedOpen::new(unlock(&mut client).await, SCOPE).unwrap();
+    let other = cvlt::PreparedOpen::new(unlock(&mut client).await, "other").unwrap();
+    assert_eq!(prepared.locator(), same.locator());
+    assert_ne!(prepared.locator(), other.locator());
+    assert_eq!(format!("{prepared:?}"), "PreparedOpen([redacted])");
+    let inspector = prepared.inspector().unwrap();
+    let backend = Memory::new();
+    seed(backend.clone(), &mut client).await;
+    let before = backend.read().await.unwrap();
+    assert_eq!(
+        prepared
+            .open_existing(backend.clone(), owners())
+            .await
+            .unwrap_err(),
+        cvlt::OpenError::Keys(ckmg::Error::MissingCheckpoint)
+    );
+    assert_eq!(backend.read().await.unwrap(), before);
+    // The narrow original Keys inspector survives PRF consumption, yet cannot
+    // interpret a whole Storage checkpoint as the distinct sealed Keys format.
+    assert_eq!(
+        inspector.inspect(before.as_ref().unwrap()).unwrap_err(),
+        ckmg::Error::Encoding
+    );
+    drop(inspector);
+});
 
 shared!(
     same_synced_passkey_opens_actual_store_but_missing_keys_never_become_custody,

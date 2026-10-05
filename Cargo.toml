@@ -12,20 +12,39 @@ include = ["Cargo.toml", "src/**", "README.md", "LICENSE.md", "docs/**"]
 
 [lib]
 crate-type = ["rlib"]
-# All behavior vectors are integration tests; there is no separate unit harness.
-test = false
+# Original private retention codec vectors run in the unit harness.
+test = true
+
+[features]
+default = []
+native-records = ["ckmg/native-records", "dep:cmsh"]
 
 [dependencies]
+cchr = { git = "https://github.com/corbet-foss/cchr", branch = "main" }
+ckyh = { git = "https://github.com/corbet-foss/ckyh", branch = "main", default-features = false }
+cprz = { git = "https://github.com/corbet-foss/cprz", branch = "main", default-features = false }
+cprz-pad = { git = "https://github.com/corbet-foss/cprz", branch = "main" }
+cdht = { git = "https://github.com/corbet-foss/cdht", branch = "main" }
 cpky = { git = "https://github.com/corbet-foss/cpky", branch = "main" }
 ckmg = { git = "https://github.com/corbet-foss/ckmg", branch = "main" }
 cwst = { git = "https://github.com/corbet-foss/cwst", branch = "main" }
 futures = "0.3"
+serde_json = "1"
 blake3 = "1"
 zeroize = { version = "1", features = ["derive"] }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cmsh = { git = "https://github.com/corbet-libs/cmsh", branch = "main", features = ["veilid"], optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+ckyh = { git = "https://github.com/corbet-foss/ckyh", branch = "main", default-features = false, features = ["server"] }
+crlt = { git = "https://github.com/corbet-foss/crlt", branch = "main" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tempfile = "3"
+
 [dev-dependencies]
+csgn = { git = "https://github.com/corbet-foss/csgn", branch = "main", default-features = false, features = ["volatile-signer"] }
 cpky = { git = "https://github.com/corbet-foss/cpky", branch = "main", features = ["test-authenticator"] }
-serde_json = "1"
 base64 = "0.22"
 futures-executor = "0.3"
 wasm-bindgen-test = "0.3.79"

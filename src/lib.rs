@@ -2,10 +2,18 @@
 //! It never duplicates their lineage, record, proof or accepted-state logic.
 #![forbid(unsafe_code)]
 mod existing;
+mod lineage;
+mod records;
+mod retention;
 mod storage;
 use ckmg::{Authority, Clock, Entropy, Locator};
 use cwst::backend::Backend;
-pub use existing::{OpenError, Owners};
+pub use existing::{OpenError, Owners, PreparedOpen};
+pub use lineage::{LineageError, VerifiedLineageObservation, verify_lineage};
+pub use records::{PasskeyRecords, RecordCheckpoint, RecordError};
+pub use retention::{
+    EvidenceError, LineageEvidence, MAX_LINEAGE_EVIDENCE_BYTES, PreparedLineageEvidence,
+};
 pub use storage::*;
 
 /// A restore lookup distinguishes authenticated absence from unavailable data.
@@ -30,7 +38,7 @@ impl std::fmt::Debug for RestoreLookup {
 }
 /// Records owns authentication, Veilid format, retention and transport. This port
 /// deliberately carries no raw identity/root key, URL, IP or operator backup path.
-/// No permissive production implementation is supplied before cdht integration.
+/// [`PasskeyRecords`] forwards original authenticated reads without an absence fallback.
 pub trait Records {
     /// Look up the passkey-derived opaque locator with explicit availability semantics.
     fn lookup(&mut self, locator: &Locator) -> impl std::future::Future<Output = RestoreLookup>;
@@ -103,4 +111,14 @@ impl<B: Backend, C, E, A, R, W> std::fmt::Debug for Vault<B, C, E, A, R, W> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Vault([redacted])")
     }
+}
+
+#[cfg(all(test, target_arch = "wasm32"))]
+wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+// Link the existing profiling runtime into this newly enabled unit test binary.
+#[cfg(all(test, target_arch = "wasm32", owned_browser_coverage))]
+#[wasm_bindgen_test::wasm_bindgen_test]
+fn profiling_runtime_is_linked() {
+    let _ = browser_coverage_runtime::__owned_test_module_signature();
 }
