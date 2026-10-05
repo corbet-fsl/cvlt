@@ -172,3 +172,9 @@ unchanged Keys/output values, pending-receipt mismatch, incomplete/corrupt/overs
 local values and fresh revocation/expiry refusal. Fault injection only delays or
 loses the original backend result; it never fabricates accepted custody/evidence.
 Native/browser execution and full coverage remain pending.
+
+Compound checkpoint chunking is described in [COMPOUND-RECORDS.md](COMPOUND-RECORDS.md).
+It preserves original passkey-root retention, uses only original authenticated
+Records operations and exact Storage wire, and cannot grant lineage/currentness
+or infer absence. Its production bootstrap and equal-passkey Store wrapping gaps
+remain explicit.

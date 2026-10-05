@@ -1,12 +1,17 @@
 //! Vault composes Keys, encrypted Storage and injected Records/Wallet owners.
 //! It never duplicates their lineage, record, proof or accepted-state logic.
 #![forbid(unsafe_code)]
+mod compound;
 mod existing;
 mod lineage;
 mod records;
 mod retention;
 mod storage;
 use ckmg::{Authority, Clock, Entropy, Locator};
+pub use compound::{
+    CHECKPOINT_SUBKEYS, CheckpointError, CheckpointPublication, CompoundRecords,
+    MAX_CHECKPOINT_RECORDS, MAX_PACKED_CHECKPOINT, PreparedCheckpoint, RetainedCheckpoint,
+};
 use cwst::backend::Backend;
 pub use existing::{OpenError, Owners, PreparedOpen};
 pub use lineage::{LineageError, VerifiedLineageObservation, verify_lineage};
@@ -122,3 +127,6 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 fn profiling_runtime_is_linked() {
     let _ = browser_coverage_runtime::__owned_test_module_signature();
 }
+
+#[cfg(all(feature = "native-records", not(target_arch = "wasm32")))]
+pub use compound::native_checkpoint_record;

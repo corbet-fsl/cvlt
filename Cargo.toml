@@ -39,7 +39,7 @@ cmsh = { git = "https://github.com/corbet-libs/cmsh", branch = "main", features 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 ckyh = { git = "https://github.com/corbet-foss/ckyh", branch = "main", default-features = false, features = ["server"] }
 crlt = { git = "https://github.com/corbet-foss/crlt", branch = "main" }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tempfile = "3"
 
 [dev-dependencies]
