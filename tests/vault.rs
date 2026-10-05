@@ -1,4 +1,6 @@
 //! Real encrypted storage composition. Unavailable G3/Records/Wallet stay unavailable.
+#[path = "cases/existing.rs"]
+mod existing;
 use ckmg::{
     Commit, SecureStore,
     passkey::{PrfOutput, store_cipher, vault_location},

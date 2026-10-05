@@ -1,9 +1,11 @@
 //! Vault composes Keys, encrypted Storage and injected Records/Wallet owners.
 //! It never duplicates their lineage, record, proof or accepted-state logic.
 #![forbid(unsafe_code)]
+mod existing;
 mod storage;
 use ckmg::{Authority, Clock, Entropy, Locator};
 use cwst::backend::Backend;
+pub use existing::{OpenError, Owners};
 pub use storage::*;
 
 /// A restore lookup distinguishes authenticated absence from unavailable data.

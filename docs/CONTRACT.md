@@ -42,8 +42,17 @@ local and DHT copies after long absence can lose identity and data equally for
 every passkey. No first passkey retains privileged recordless recovery. This rule
 does not define a new wrapping format, discovery scheme or retention guarantee;
 those owner ports must be implemented and reviewed before restore is accepted.
-The current deterministic Keys implementation is not evidence of that contract.
-Vault only composes its eventual owner checkpoints and outputs atomically. No local
+A local Keys checkpoint alone is not evidence of that end-to-end contract.
+Vault composes the original owner checkpoints and outputs atomically. No local
 HTTP/WebAuthn/network code, raw root export, operator backup or duplicated domain
 state is introduced. `lock` wipes Keys and shared decrypted Storage immediately;
 existing shared container references then receive Locked from Storage.
+
+`open_existing` is a consume-only local opening path. It never calls Store create,
+Keys create_scope, Records lookup or a Wallet constructor. The original UnlockSecret
+is consumed into PrfOutput once; the borrowed opaque PRF feeds original store_cipher
+and Keys.unlock without cloning/export. A current Keys.lineage/Authority check is
+mandatory before the Vault returns. On error or cancellation, the owned Store and
+Keys are dropped and their original secret owners wipe unlocked material; no
+accepted checkpoint mutation or output was prepared. This does not make missing
+production G3, equal-root replication or full restore composition available.
