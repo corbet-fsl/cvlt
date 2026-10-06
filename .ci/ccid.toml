@@ -1,0 +1,17 @@
+schema = 1
+project = "cvlt"
+
+[checks.verify]
+kind = "commands"
+commands = [["bash", ".ci/verify.sh"]]
+cache_tools = [["rustc", "-vV"], ["cargo", "--version"], ["rustup", "run", "nightly", "rustc", "-vV"], ["rustup", "run", "nightly", "cargo", "llvm-cov", "--version"], ["python3", "--version"], ["python3", "-c", "import selenium; print(selenium.__version__)"], ["node", "--version"], ["wasm-pack", "--version"], ["clang", "--version"], ["chromedriver", "--version"], ["chromium", "--version"]]
+cache_outputs = ["coverage.json", "coverage.lcov", "coverage.txt", "wasm-coverage.json", "wasm-coverage.lcov", "wasm-coverage.txt"]
+
+[render]
+tool_revision = "81ebac8e86e20bc93b69d5e912bbcb0c0d036d58"
+
+[jobs.verify]
+scheduler = "crow"
+checks = ["verify"]
+workflow = "repository-jobs"
+command = ["bash", ".ci/run-cached.sh"]
