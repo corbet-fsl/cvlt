@@ -1,4 +1,9 @@
 //! Real encrypted storage composition. Unavailable G3/Records/Wallet stay unavailable.
+#[path = "cases/existing.rs"]
+mod existing;
+#[cfg(all(feature = "native-records", not(target_arch = "wasm32")))]
+#[path = "cases/records.rs"]
+mod records;
 use ckmg::{
     Commit, SecureStore,
     passkey::{PrfOutput, store_cipher, vault_location},
@@ -373,3 +378,62 @@ shared!(unknown_outcome_is_reconciled_and_locked_reads_refuse, {
 fn profiling_runtime_is_linked() {
     let _ = browser_coverage_runtime::__owned_test_module_signature();
 }
+
+shared!(
+    keys_reads_reenter_the_original_store_without_skipping_fences,
+    {
+        use futures::FutureExt;
+        let prf = PrfOutput::from_bytes(&[4; 32]).unwrap();
+        let cipher = store_cipher(&prf, "garden").unwrap();
+        let locator = vault_location(&prf, "garden").unwrap();
+        let backend = cwst::backend::Memory::new();
+        let storage = shared_store(
+            cwst::Store::create(backend, &cipher, "garden")
+                .await
+                .unwrap(),
+        );
+        let mut keys = KeyStore::new(storage.clone(), "garden").unwrap();
+        let mut original = storage.lock().await;
+        // Old KeyStore::load would remain Pending while this SAME guard is held.
+        assert_eq!(keys.load(&locator).now_or_never(), Some(Ok(None)));
+        original
+            .commit(
+                0,
+                [1; 32],
+                &[cwst::Change::Put {
+                    owner: "keys",
+                    key: locator.as_bytes(),
+                    value: b"first committed ciphertext",
+                }],
+                &[],
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            keys.load(&locator).now_or_never(),
+            Some(Ok(Some(b"first committed ciphertext".to_vec())))
+        );
+        original
+            .commit(
+                1,
+                [2; 32],
+                &[cwst::Change::Put {
+                    owner: "keys",
+                    key: locator.as_bytes(),
+                    value: b"next committed ciphertext",
+                }],
+                &[],
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            keys.load(&locator).now_or_never(),
+            Some(Ok(Some(b"next committed ciphertext".to_vec())))
+        );
+        original.lock_in_place();
+        assert_eq!(
+            keys.load(&locator).now_or_never(),
+            Some(Err(ckmg::Error::Unavailable))
+        );
+    }
+);
