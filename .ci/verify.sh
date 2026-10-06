@@ -28,7 +28,14 @@ printf '%s\n' 'cvlt ci: stage=wasm-pack'
 command -v wasm-pack || true
 wasm-pack --version || true
 command -v wasm-pack >/dev/null || { echo 'missing wasm-pack' >&2; exit 2; }
+# The nix wrapper `clang` on PATH breaks the wasm32 C build (host glibc
+# headers); resolve `clang` to the pinned unwrapped compiler for this leg
+# only: the subshell keeps native builds and nightly coverage on the wrapper.
+: "${CVLT_WASM_CLANG_BIN:?Missing unwrapped wasm clang from run-cached.sh}"
+(
+export PATH="$CVLT_WASM_CLANG_BIN:$PATH"
 wasm-pack test --headless --chrome -- --locked
+)
 
 rustup run nightly rustc --version
 NIGHTLY_RUSTC="$(rustup which --toolchain nightly rustc)"
@@ -39,6 +46,15 @@ export CARGO="$NIGHTLY_CARGO"
 export PATH="$NIGHTLY_BIN:$PATH"
 export RUSTUP_TOOLCHAIN=nightly
 "$NIGHTLY_CARGO" llvm-cov --version
+# Bug 2 isolation: coverage data must not reuse the shared cargo target
+# across jobs (stale checkout paths fail the next gate); scope the
+# coverage target to this job only. Native gates keep the shared warm
+# target; outer traps and services are untouched.
+(
+coverage_target="$(mktemp -d)"
+case "$coverage_target" in ""|"$PWD"/*) echo 'unsafe coverage target' >&2; exit 2;; esac
+trap 'rm -rf -- "$coverage_target"' EXIT
+export CARGO_TARGET_DIR="$coverage_target"
 "$NIGHTLY_CARGO" llvm-cov --locked --branch --json --output-path coverage.json --ignore-filename-regex '/tests/'
 "$NIGHTLY_CARGO" llvm-cov report --lcov --output-path coverage.lcov --ignore-filename-regex '/tests/'
 "$NIGHTLY_CARGO" llvm-cov report --text --output-path coverage.txt --ignore-filename-regex '/tests/'
@@ -63,7 +79,7 @@ export WASM_BINDGEN_SPLIT_LINKED_MODULES="1"
 # chromium+chromedriver via CHROMEDRIVER/CHROME_BIN.
 export CHROMEDRIVER="${CHROMEDRIVER:-$(command -v chromedriver || echo /usr/bin/chromedriver)}"
 export CHROME_BIN="${CHROME_BIN:-$(command -v chromium || command -v chromium-browser || command -v google-chrome || echo chromium)}"
-export CC_wasm32_unknown_unknown="clang"
+export CC_wasm32_unknown_unknown="$CVLT_WASM_CLANG"
 rustc --version --verbose
 "$NIGHTLY_CARGO" llvm-cov --version
 clang --version
@@ -122,7 +138,12 @@ test "$drift_added" -eq 2
 grep -F "$CHROMEDRIVER" "$runner_copy"
 grep -F "$CHROME_BIN" "$runner_copy"
 export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="python3 $runner_copy"
+: "${CVLT_WASM_CLANG_BIN:?Missing unwrapped wasm clang from run-cached.sh}"
+(
+export PATH="$CVLT_WASM_CLANG_BIN:$PATH"
 "$NIGHTLY_CARGO" llvm-cov test --locked --branch --coverage-target-only --target wasm32-unknown-unknown --json --output-path wasm-coverage.json --ignore-filename-regex '/tests/'
+)
 "$NIGHTLY_CARGO" llvm-cov report --target wasm32-unknown-unknown --lcov --output-path wasm-coverage.lcov --ignore-filename-regex '/tests/'
 "$NIGHTLY_CARGO" llvm-cov report --target wasm32-unknown-unknown --text --output-path wasm-coverage.txt --ignore-filename-regex '/tests/'
+)
 python3 .github/scripts/check-coverage.py wasm-coverage.lcov wasm-coverage.json wasm-coverage.txt wasm
