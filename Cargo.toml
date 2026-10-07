@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 description = "Vault facade: the member side's trust core for identity, keys, credentials, proofs and storage"
 license = "FSL-1.1-ALv2"
-repository = "https://github.com/corbet-libs/cvlt"
+repository = "https://git.corbet.ch/corbet-libs/cvlt"
 readme = "README.md"
 publish = false
 include = ["Cargo.toml", "src/**", "README.md", "LICENSE.md", "docs/**"]
@@ -16,8 +16,8 @@ crate-type = ["rlib"]
 test = false
 
 [dependencies]
-ckmg = { git = "https://github.com/corbet-foss/ckmg", branch = "main" }
-cwst = { git = "https://github.com/corbet-foss/cwst", branch = "main" }
+ckmg = { git = "https://git.corbet.ch/corbet-foss/ckmg", branch = "main" }
+cwst = { git = "https://git.corbet.ch/corbet-foss/cwst", branch = "main" }
 futures = "0.3"
 blake3 = "1"
 zeroize = { version = "1", features = ["derive"] }
