@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 CHECK = Path(__file__).with_name('check-lock.py')
-URL = 'https://github.com/corbet-foss/ckmg'
+URL = 'https://git.corbet.ch/corbet-foss/ckmg'
 SHA = 'a' * 40
 
 
