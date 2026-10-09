@@ -149,7 +149,7 @@ dependencies = [
 [[package]]
 name = "ckmg"
 version = "0.0.0"
-source = "git+https://github.com/corbet-foss/ckmg?branch=main#08c47d7495b67dc28a795075d9d6ebb65667f663"
+source = "git+https://github.com/corbet-foss/ckmg?branch=main#86beae6226af7786b3dba7d2511181a4c0a276ae"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -255,7 +255,7 @@ dependencies = [
 [[package]]
 name = "cwst"
 version = "0.0.0"
-source = "git+https://github.com/corbet-foss/cwst?branch=main#ec489110cf73368d69019745cdca6f9d8884f3c5"
+source = "git+https://github.com/corbet-foss/cwst?branch=main#f552f5e50daa535d6f6c65460edca4126ab81c9c"
 dependencies = [
  "atomicwrites",
  "blake3",
