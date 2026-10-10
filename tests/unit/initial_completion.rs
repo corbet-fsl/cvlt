@@ -14,6 +14,8 @@ macro_rules! shared {
         async fn $name() $body
     };
 }
+#[path = "initial_publication.rs"]
+mod publication_tests;
 #[derive(Clone)]
 struct Destination {
     memory: cwst::backend::Memory,
@@ -109,6 +111,13 @@ async fn create(
     destination: Destination,
     consumed: Rc<Cell<bool>>,
 ) -> Result<InitialCreation<Destination>, InitialError> {
+    create_with_entropy(destination, consumed, ckmg::SystemEntropy).await
+}
+async fn create_with_entropy(
+    destination: Destination,
+    consumed: Rc<Cell<bool>>,
+    entropy: impl Entropy,
+) -> Result<InitialCreation<Destination>, InitialError> {
     let input = opening(23, "garden");
     let device = input.device().unwrap();
     input
@@ -125,7 +134,7 @@ async fn create(
             },
             Owners {
                 clock: TestClock(10),
-                entropy: ckmg::SystemEntropy,
+                entropy,
                 authority: CreateOnce { device, consumed },
                 records: UnavailableRecords,
                 wallet: (),

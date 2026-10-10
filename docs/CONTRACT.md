@@ -244,7 +244,9 @@ The consume-only `InitialCreation` owner admits these durable states:
 | --- | --- | --- |
 | Pending | Original pending Created Keys, exact common-root Store and its operation | Freeze one verified evidence payload, nonce and exclusive deadline |
 | Prepared | Same original data plus the immutable intent and preparing clock floor | Dedicated original completion authorization, exact inner authentication and fixed genesis signing |
-| Retained | Same intent plus exact upstream descriptor/value bytes and matching CWST outbox | Retransmit those exact bytes only |
+| Retained | Same intent plus exact upstream descriptor/value bytes and matching CWST outbox | Durably stage those bytes through the original publication client |
+| Staged | Same signed outbox plus the exact original CDHT ClientState in the original Store | Attempt that original queued publication; no acknowledgment or readiness inference |
+| Conflicted | Same signed outbox plus original ClientState containing an authenticated conflicting observation | Refuse publication; later original lineage/owner resolution is required |
 
 Every mutation consumes the active handle, including failure and cancellation.
 The dedicated Keys owner must verify original current passkey evidence and live
@@ -276,8 +278,26 @@ Crash cuts remain distinct:
   deadline under fresh dedicated authority; another signing intent is refused.
 - After output CAS commits, unknown delivery is reconciled by reopening the
   exact signed outbox. A replacement nonce or root is never generated.
+- After Staged commits, `InitialPublication` privately owns the original CDHT
+  client. No signer, cipher or arbitrary queue mutation escapes. Staging calls no
+  transport method. Reopen requires its entire original ClientState to match the
+  retained signed pair, and original revalidation may not discard any entry.
+- Before flush, an actual backend read must still match the exact committed
+  Store. A failed read or conflicting generation refuses without network output.
+  Cancellation and uncertain transport leave the original durable queue and both
+  signed outbox entries unchanged. Even an accepted transport report does not
+  retire them: forced lineage verification and normal owner acknowledgment remain
+  separate steps. Reports are observations of one attempt, never member authority.
+- A validated newer or equal-conflicting record commits the original client's
+  authenticated observation into Conflicted before returning that report. The
+  original client must independently establish that the observation fences the
+  retained pair; an empty queue or boolean is not evidence. Reopen refuses all
+  publication from Conflicted even if the newer remote holders disappear. Its
+  original signed outbox remains unacknowledged. Cancellation before this CAS
+  cannot promise durability for a memory-only observation; unknown completion
+  requires reopening actual bytes, and no result grants ordinary authority.
 
-The full product journey is unfinished. Actual primary Records publication,
+The full product journey is unfinished. Actual Records publication,
 forced current-lineage read, normal authority, exact Keys acknowledgment,
 recoverable per-passkey checkpoint publication and retirement of the temporary
 outer wrapper must precede production creation readiness. The current piece
@@ -286,3 +306,15 @@ scenarios execute original Keys/Storage/CDHT with strictly scoped authorization
 fixtures and inert persistence faults; they do not establish HTTPS/certificate
 admission. Their source has been reviewed and formatted, but Cargo tests have
 not run in this tranche.
+
+The bounded publication scenarios compose original pending Keys, encrypted CWST,
+CDHT RPC encodings, client state and a validating LocalBackend; only persistence
+and transport faults are inert. They cover durable-before-network ordering,
+exact reopen, cancellation before and after CAS, unknown CAS, lost set replies,
+cancellation after an actual set, and stale/unavailable local storage. They also
+retain genuinely signed newer and equal-conflicting original values through
+terminal conflict CAS, cancellation and unknown completion, and reject an
+authenticated Store containing a substituted or incomplete client queue. They do
+not qualify a Tor network or native/browser Veilid. The Tor-first demonstration
+may compose the original Tor backend next; it must not be reported as working
+native Veilid or as complete initial creation.

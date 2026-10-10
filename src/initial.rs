@@ -5,6 +5,9 @@ use cwst::backend::Backend;
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 
+mod publication;
+pub use publication::InitialPublication;
+
 const OWNER: &str = "initial-creation";
 const INNER: &[u8] = b"common-root-store";
 const OPERATION: &[u8] = b"inner-operation";
@@ -12,6 +15,7 @@ const KEYS: &[u8] = b"pending-created-keys";
 const INTENT: &[u8] = b"prepared-intent";
 const DESCRIPTOR: &[u8] = b"genesis-descriptor";
 const VALUE: &[u8] = b"genesis-value";
+const QUEUE: &[u8] = b"genesis-client-state";
 
 /// Coarse failure; absence never authorizes another Create.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,6 +28,8 @@ pub enum InitialError {
     Keys(ckmg::Error),
     /// Original evidence packing or record codec refused.
     Records(crate::RecordError),
+    /// The original signed publication client or its transport refused.
+    Publication(cdht::Error),
     /// The authenticated owner state does not describe this exact operation.
     Invalid,
 }
@@ -43,6 +49,12 @@ pub enum InitialPhase {
     Prepared,
     /// Exact original signed outputs have committed before any network output.
     Retained,
+    /// Original ClientState committed before its exact publication can be flushed.
+    /// This is neither a delivery observation nor normal member authority.
+    Staged,
+    /// A genuine authenticated conflicting observation has committed. Publication
+    /// from this operation is terminally refused; no retry may erase that floor.
+    Conflicted,
 }
 
 struct BackendRef<B>(Rc<B>);
@@ -326,6 +338,10 @@ impl<B: Backend> InitialCreation<B> {
             .store
             .read(OWNER, VALUE)
             .map_err(InitialError::Storage)?;
+        let queue = self
+            .store
+            .read(OWNER, QUEUE)
+            .map_err(InitialError::Storage)?;
         let version = self.store.version().map_err(InitialError::Storage)?;
         let expected_operation = if version == 1 {
             initial_operation(&self.store)?
@@ -344,16 +360,26 @@ impl<B: Backend> InitialCreation<B> {
         {
             return Err(InitialError::Invalid);
         }
-        match (version, intent, descriptor, value) {
-            (1, None, None, None) => Ok(InitialPhase::Pending),
-            (2, Some(bytes), None, None) => {
+        match (version, intent, descriptor, value, queue) {
+            (1, None, None, None, None) => Ok(InitialPhase::Pending),
+            (2, Some(bytes), None, None, None) => {
                 decode_intent(bytes)?;
                 Ok(InitialPhase::Prepared)
             }
-            (3, Some(bytes), Some(_), Some(_)) => {
+            (3, Some(bytes), Some(_), Some(_), None) => {
                 decode_intent(bytes)?;
                 self.retained()?;
                 Ok(InitialPhase::Retained)
+            }
+            (4, Some(bytes), Some(_), Some(_), Some(_)) => {
+                decode_intent(bytes)?;
+                self.staged_state()?;
+                Ok(InitialPhase::Staged)
+            }
+            (5, Some(bytes), Some(_), Some(_), Some(_)) => {
+                decode_intent(bytes)?;
+                self.conflicted_state()?;
+                Ok(InitialPhase::Conflicted)
             }
             _ => Err(InitialError::Invalid),
         }
@@ -422,7 +448,7 @@ impl<B: Backend> InitialCreation<B> {
     /// Read only the exact committed original outputs. Reopening never signs
     /// anew or manufactures another nonce, deadline, receipt or creation root.
     pub fn retained(&self) -> Result<RetainedGenesis, InitialError> {
-        if self.store.version().map_err(InitialError::Storage)? != 3 {
+        if !matches!(self.store.version().map_err(InitialError::Storage)?, 3..=5) {
             return Err(InitialError::Invalid);
         }
         let descriptor =
