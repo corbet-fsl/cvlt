@@ -149,6 +149,55 @@ impl PreparedOpen {
         crate::PasskeyRecords::new(self.locator, record).map_err(OpenError::Records)
     }
 
+    /// Explicit original first registration, never a fallback from failed restore.
+    /// The injected Authority must consume original registration provenance for
+    /// `Create`; this method establishes no membership or publication authority.
+    /// Keys and companion values reach the empty destination in one actual CAS,
+    /// already wrapped under the newly generated common root. No intermediate
+    /// empty or PRF-wrapped durable checkpoint is installed.
+    ///
+    /// Uncertainty or cancellation requires reopening the exact destination;
+    /// neither permits retrying Create with a replacement root. The returned
+    /// Receipt remains pending until its original publication is acknowledged.
+    pub async fn create_initial<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W>(
+        self,
+        backend: B,
+        binding: ckmg::Binding,
+        info: ckmg::DeviceInfo,
+        evidence: &[u8],
+        batch: crate::Batch,
+        owners: Owners<C, E, A, R, W>,
+    ) -> Result<(Vault<B, C, E, A, R, W>, ckmg::Receipt), OpenError> {
+        if binding.community() != self.scope || batch.expected != 0 {
+            return Err(OpenError::Composition(Error::Scope));
+        }
+        let mut key_store =
+            crate::KeyStore::initial(backend, &self.scope).map_err(OpenError::Composition)?;
+        let guard = key_store.stage(batch).map_err(OpenError::Composition)?;
+        let mut keys = ckmg::Keys::new(
+            key_store.clone(),
+            owners.clock,
+            owners.entropy,
+            owners.authority,
+        );
+        let receipt = keys
+            .create_scope(&self.prf, binding, info, evidence)
+            .await
+            .map_err(OpenError::Keys)?;
+        let storage = key_store.ready().await.map_err(OpenError::Keys)?;
+        drop(guard);
+        Ok((
+            Vault {
+                keys,
+                storage,
+                key_store,
+                records: owners.records,
+                wallet: owners.wallet,
+            },
+            receipt,
+        ))
+    }
+
     /// A PRF-only open is no longer a restore path. Call `prepare_recovery` with the
     /// retained recovery record, or explicitly select `migrate_legacy` for the
     /// unpublished PRF-wrapped candidate. There is no silent cipher fallback.

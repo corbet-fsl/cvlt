@@ -85,14 +85,19 @@ impl Drop for BatchGuard {
 /// ckmg's real durable adapter. Keys ciphertext and companion outputs share one
 /// cwst transaction. It never reports a staged write as durably committed.
 pub struct KeyStore<B: Backend> {
-    storage: SharedStore<B>,
+    backing: Rc<futures::lock::Mutex<Backing<B>>>,
     scope: String,
     slot: Rc<RefCell<Slot>>,
+}
+enum Backing<B: Backend> {
+    Initial(B),
+    Ready(SharedStore<B>),
+    Spent,
 }
 impl<B: Backend> Clone for KeyStore<B> {
     fn clone(&self) -> Self {
         Self {
-            storage: self.storage.clone(),
+            backing: self.backing.clone(),
             scope: self.scope.clone(),
             slot: self.slot.clone(),
         }
@@ -105,11 +110,29 @@ impl<B: Backend> KeyStore<B> {
             return Err(Error::Scope);
         }
         Ok(Self {
-            storage,
+            backing: Rc::new(futures::lock::Mutex::new(Backing::Ready(storage))),
             scope: scope.into(),
             slot: Rc::new(RefCell::new(Slot::default())),
         })
     }
+    pub(crate) fn initial(backend: B, scope: &str) -> Result<Self, Error> {
+        if scope.is_empty() || scope.len() > cwst::MAX_KEY_BYTES {
+            return Err(Error::Scope);
+        }
+        Ok(Self {
+            backing: Rc::new(futures::lock::Mutex::new(Backing::Initial(backend))),
+            scope: scope.into(),
+            slot: Rc::new(RefCell::new(Slot::default())),
+        })
+    }
+
+    pub(crate) async fn ready(&self) -> Result<SharedStore<B>, ckmg::Error> {
+        match &*self.backing.lock().await {
+            Backing::Ready(storage) => Ok(storage.clone()),
+            _ => Err(ckmg::Error::Reconcile),
+        }
+    }
+
     /// Stage one compound write, refusing reserved owners and concurrent batches.
     pub fn stage(&mut self, batch: Batch) -> Result<BatchGuard, Error> {
         if batch.operation == [0; 32] || batch.mutations.iter().any(|m| m.owner == "keys") {
@@ -141,7 +164,25 @@ impl<B: Backend> KeyStore<B> {
             .batch
             .take()
             .ok_or(ckmg::Error::Unavailable)?;
-        let mut store = self.storage.lock().await;
+        let mut backing = self.backing.lock().await;
+        let storage = match &*backing {
+            Backing::Ready(storage) => storage.clone(),
+            Backing::Spent => return Err(ckmg::Error::Reconcile),
+            Backing::Initial(_) => {
+                // Consume the destination before preparation or destination I/O. A dropped or
+                // uncertain creation cannot retry with another random root.
+                let Backing::Initial(backend) = std::mem::replace(&mut *backing, Backing::Spent)
+                else {
+                    unreachable!();
+                };
+                drop(backing);
+                return self
+                    .commit_initial(backend, location, expected, replacement, cipher, batch)
+                    .await;
+            }
+        };
+        drop(backing);
+        let mut store = storage.lock().await;
         if !store.is_scope(&self.scope) {
             return Err(ckmg::Error::Unauthorized);
         }
@@ -199,10 +240,25 @@ impl<B: Backend> KeyStore<B> {
 
 impl<B: Backend> SecureStore for KeyStore<B> {
     async fn load(&mut self, location: &Locator) -> Result<Option<Vec<u8>>, ckmg::Error> {
-        if !self.storage.keys.is_scope(&self.scope) {
+        let backing = self.backing.lock().await;
+        let storage = match &*backing {
+            Backing::Initial(backend) => {
+                // This is actual destination absence, never a missing local
+                // Keys entry, cache miss or a failed read interpreted as empty.
+                return match backend.read().await {
+                    Ok(None) => Ok(None),
+                    Ok(Some(_)) => Err(ckmg::Error::RootExists),
+                    Err(_) => Err(ckmg::Error::Unavailable),
+                };
+            }
+            Backing::Ready(storage) => storage.clone(),
+            Backing::Spent => return Err(ckmg::Error::Reconcile),
+        };
+        drop(backing);
+        if !storage.keys.is_scope(&self.scope) {
             return Err(ckmg::Error::Unauthorized);
         }
-        self.storage
+        storage
             .keys
             .read(location.as_bytes(), ckmg::MAX_CHECKPOINT_BYTES)
             .map_err(|error| match error {
@@ -232,3 +288,97 @@ impl<B: Backend> SecureStore for KeyStore<B> {
             .await
     }
 }
+
+impl<B: Backend> KeyStore<B> {
+    async fn commit_initial(
+        &self,
+        backend: B,
+        location: &Locator,
+        expected: Option<[u8; 32]>,
+        replacement: &[u8],
+        cipher: Option<&ckmg::passkey::StoreCipher>,
+        batch: Batch,
+    ) -> Result<Commit, ckmg::Error> {
+        let cipher = cipher.ok_or(ckmg::Error::Unauthorized)?;
+        if expected.is_some() || batch.expected != 0 {
+            return Ok(Commit::Conflict);
+        }
+        // Original ephemeral Storage is preparation only. No Memory receipt
+        // escapes and no successful preparation is reported to Keys as durable.
+        let mut prepared = cwst::Store::create(cwst::backend::Memory::new(), cipher, &self.scope)
+            .await
+            .map_err(|_| ckmg::Error::Unavailable)?;
+        let mut changes: Vec<_> = batch
+            .mutations
+            .iter()
+            .map(|m| match &m.value {
+                Some(value) => cwst::Change::Put {
+                    owner: &m.owner,
+                    key: &m.key,
+                    value,
+                },
+                None => cwst::Change::Delete {
+                    owner: &m.owner,
+                    key: &m.key,
+                },
+            })
+            .collect();
+        changes.push(cwst::Change::Put {
+            owner: "keys",
+            key: location.as_bytes(),
+            value: replacement,
+        });
+        prepared
+            .commit(0, batch.operation, &changes, &batch.outputs)
+            .await
+            .map_err(|_| ckmg::Error::Unavailable)?;
+        let wire = prepared
+            .sealed_checkpoint()
+            .map_err(|_| ckmg::Error::Unavailable)?;
+        let result = install_initial(
+            backend,
+            cipher,
+            &self.scope,
+            location,
+            replacement,
+            batch.operation,
+            wire,
+        )
+        .await;
+        match result {
+            Ok(store) => {
+                // A cancellation waiting for this lock leaves Spent. The exact
+                // durable bytes must then be reopened, never recreated.
+                *self.backing.lock().await = Backing::Ready(shared_store(store));
+                Ok(Commit::Committed)
+            }
+            Err(cwst::Error::AlreadyInitialized | cwst::Error::Conflict) => Ok(Commit::Conflict),
+            Err(_) => Ok(Commit::Unknown),
+        }
+    }
+}
+
+async fn install_initial<B: Backend>(
+    backend: B,
+    cipher: &ckmg::passkey::StoreCipher,
+    scope: &str,
+    location: &Locator,
+    replacement: &[u8],
+    operation: [u8; 32],
+    wire: &[u8],
+) -> Result<cwst::Store<B>, cwst::Error> {
+    cwst::Store::restore_checked(backend, cipher, scope, 1, wire, |store| {
+        if !store.is_scope(scope)
+            || store.operation()? != operation
+            || store.read("keys", location.as_bytes())? != Some(replacement)
+        {
+            return Err(cwst::Error::Corrupt);
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/initial_store.rs"]
+mod initial_tests;

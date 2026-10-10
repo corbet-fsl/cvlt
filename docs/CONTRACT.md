@@ -196,3 +196,33 @@ The random data key is preserved. No public cipher getter or alternate accepted
 checkpoint is introduced. Missing/unavailable input never selects creation.
 The production current-lineage authority/bootstrap read-key sequencing remains
 an explicit integration boundary; these APIs alone do not qualify full restore.
+
+
+`PreparedOpen::create_initial` is the explicit first-registration composition.
+Its injected Keys Authority must consume original registration provenance; the
+method never infers Create from missing Records or a failed restoration. Before
+Keys generates its random root, the original destination backend must actually
+report absence. Existing bytes and failed reads refuse this path.
+
+The Initial Keys adapter consumes its destination before preparation. Original
+`cwst::Memory` builds one complete checkpoint under the borrowed common-root
+StoreCipher with Keys, companion mutations and outputs. This is ephemeral
+preparation only. Original `Store::restore_checked` authenticates those exact
+bytes, scope, version one, operation and Keys replacement before the destination's
+single empty-state CAS. Only that durable CAS followed by local publication makes
+the adapter Ready and reports Committed to Keys. No empty durable intermediate,
+PRF-only compound wrapper, exported cipher or acknowledged memory receipt exists.
+
+Cancellation, conflict and uncertain completion leave the adapter Spent. Even
+cancellation after durable CAS but before local Ready requires reopening the exact
+destination and reconciling its operation; it cannot retry Create. The original
+pending Keys Receipt is retained. This local commit neither publishes genesis nor
+establishes current lineage, membership, Wallet or device authority. Original
+certified genesis publication and sealed registration continuation remain the
+production composer's separate obligations. No restoration authority changes.
+
+Written owner scenarios cover the original Keys common-root wrapper, exact pending
+Receipt, one destination CAS, companion atomicity, unavailable/nonempty reads,
+competing writes, cancellation before/after CAS and before Ready, unknown completion,
+and authenticated scope/version/operation/Keys mismatches. These new tests have
+not executed; no native/browser or coverage qualification is claimed.
