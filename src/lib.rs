@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 mod compound;
 mod existing;
+mod initial;
 mod lineage;
 mod records;
 mod retention;
@@ -14,6 +15,7 @@ pub use compound::{
 };
 use cwst::backend::Backend;
 pub use existing::{OpenError, Owners, PreparedOpen, PreparedRecovery, RecoveryCandidate};
+pub use initial::{InitialCreation, InitialError, InitialPhase, RetainedGenesis};
 pub use lineage::{
     LineageError, LineageRead, LineageRecords, VerifiedLineageObservation, verify_lineage,
 };

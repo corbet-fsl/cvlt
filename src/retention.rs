@@ -70,6 +70,23 @@ impl std::fmt::Debug for PreparedLineageEvidence {
     }
 }
 impl LineageEvidence {
+    pub(crate) fn matches_receipt(&self, receipt: &Receipt) -> bool {
+        &self.receipt == receipt
+    }
+
+    pub(crate) fn packed(&self) -> Result<zeroize::Zeroizing<Vec<u8>>, crate::RecordError> {
+        let bytes =
+            zeroize::Zeroizing::new(self.to_bytes().map_err(|_| crate::RecordError::Invalid)?);
+        let compressed = zeroize::Zeroizing::new(
+            cprz::portable::compress(&bytes).map_err(|_| crate::RecordError::Invalid)?,
+        );
+        let data = zeroize::Zeroizing::new(cprz_pad::pad(&compressed));
+        if data.len() > cdht::MAX_SUBKEY_SIZE {
+            return Err(crate::RecordError::Limit);
+        }
+        Ok(data)
+    }
+
     /// Bounded publication envelope over original owner evidence. Unsigned
     /// WebAuthn userHandle routing data is omitted; all signed assertion bytes
     /// remain exact. Compression/padding/chunking belongs to original Records.

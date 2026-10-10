@@ -226,3 +226,63 @@ Receipt, one destination CAS, companion atomicity, unavailable/nonempty reads,
 competing writes, cancellation before/after CAS and before Ready, unknown completion,
 and authenticated scope/version/operation/Keys mismatches. These new tests have
 not executed; no native/browser or coverage qualification is claimed.
+
+## Incomplete initial creation
+
+`PreparedOpen::create_recoverable` privately prepares original Keys and the
+common-root Store, then installs their exact encrypted bytes together in one
+original PRF-wrapped CWST Store CAS into an actually empty destination. The
+Memory preparation is never returned as durable success or as a usable Vault.
+The outer Store uses the original CWST codec, limits, encryption and CAS; no
+custom ciphertext frame or wrapping primitive is introduced. The inner opaque
+value must itself fit CWST's per-value limit, and CWST also bounds aggregate
+records, JSON expansion and final encrypted checkpoint size.
+
+The consume-only `InitialCreation` owner admits these durable states:
+
+| State | Retained original data | Permitted next step |
+| --- | --- | --- |
+| Pending | Original pending Created Keys, exact common-root Store and its operation | Freeze one verified evidence payload, nonce and exclusive deadline |
+| Prepared | Same original data plus the immutable intent and preparing clock floor | Dedicated original completion authorization, exact inner authentication and fixed genesis signing |
+| Retained | Same intent plus exact upstream descriptor/value bytes and matching CWST outbox | Retransmit those exact bytes only |
+
+Every mutation consumes the active handle, including failure and cancellation.
+The dedicated Keys owner must verify original current passkey evidence and live
+membership, including a fresh owner-provided time floor, on every completion
+attempt. Both asynchronous admission and the final synchronous current-owner
+check refuse by default. Public intent fields and a cached policy snapshot are
+not such authority. The final actual backend read follows authorization and inner
+Store authentication; fixed signing follows the synchronous owner check. The
+original full-checkpoint CAS must retain exact outputs before they are exposed.
+No signing writer, ordinary Keys owner, member Use or alternate-passkey recovery
+capability is returned.
+
+A reopened pending owner preserves every durably recorded floor and the same
+exclusive intent deadline. It cannot claim knowledge of observations that were
+only in process memory after the last write. A fresh original live owner must
+supply the completion floor after restart; an accepting production adapter is
+not implemented here. Reconstructing a handle is not evidence that a previous
+clock, revocation or freshness refusal has disappeared. Within an active attempt,
+clock observations are monotonic across owner callbacks and the final Store CAS.
+
+Crash cuts remain distinct:
+
+- Before the first durable outer CAS, original Create/provenance may already be
+  consumed but no pending checkpoint exists. Reopen refuses; an original
+  owner-authorized enrollment restart protocol remains required.
+- After the initial outer CAS, the original passkey can authenticate only that
+  pending operation. Ordinary checkpoint inspection still refuses Pending.
+- After Prepared commits, retries can only use the same nonce, evidence and
+  deadline under fresh dedicated authority; another signing intent is refused.
+- After output CAS commits, unknown delivery is reconciled by reopening the
+  exact signed outbox. A replacement nonce or root is never generated.
+
+The full product journey is unfinished. Actual primary Records publication,
+forced current-lineage read, normal authority, exact Keys acknowledgment,
+recoverable per-passkey checkpoint publication and retirement of the temporary
+outer wrapper must precede production creation readiness. The current piece
+supplies no accepting authority or ordinary recovery shortcut. The written unit
+scenarios execute original Keys/Storage/CDHT with strictly scoped authorization
+fixtures and inert persistence faults; they do not establish HTTPS/certificate
+admission. Their source has been reviewed and formatted, but Cargo tests have
+not run in this tranche.

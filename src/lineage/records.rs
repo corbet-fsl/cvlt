@@ -102,13 +102,7 @@ impl<B: Backend> LineageRecords<B> {
         evidence: &LineageEvidence,
     ) -> Result<cdht::runtime::Publication, RecordError> {
         let record = self.records.get(record).ok_or(RecordError::Invalid)?;
-        let bytes = Zeroizing::new(evidence.to_bytes().map_err(|_| RecordError::Invalid)?);
-        let compressed =
-            Zeroizing::new(cprz::portable::compress(&bytes).map_err(|_| RecordError::Invalid)?);
-        let data = Zeroizing::new(cprz_pad::pad(&compressed));
-        if data.len() > cdht::MAX_SUBKEY_SIZE {
-            return Err(RecordError::Limit);
-        }
+        let data = evidence.packed()?;
         let writer = record.identity().writer.ok_or(RecordError::Invalid)?;
         record
             .republish(

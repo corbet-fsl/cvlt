@@ -51,9 +51,9 @@ impl std::error::Error for OpenError {}
 /// PRF custody stays inside Vault/Keys throughout asynchronous construction; no
 /// root is created and no raw secret, serializer or clone is available.
 pub struct PreparedOpen {
-    prf: passkey::PrfOutput,
-    scope: String,
-    locator: ckmg::Locator,
+    pub(crate) prf: passkey::PrfOutput,
+    pub(crate) scope: String,
+    pub(crate) locator: ckmg::Locator,
 }
 impl PreparedOpen {
     /// Consume the original Passkeys result and validate the intended community.
@@ -161,6 +161,26 @@ impl PreparedOpen {
     /// Receipt remains pending until its original publication is acknowledged.
     pub async fn create_initial<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W>(
         self,
+        backend: B,
+        binding: ckmg::Binding,
+        info: ckmg::DeviceInfo,
+        evidence: &[u8],
+        batch: crate::Batch,
+        owners: Owners<C, E, A, R, W>,
+    ) -> Result<(Vault<B, C, E, A, R, W>, ckmg::Receipt), OpenError> {
+        self.create_initial_inner(backend, binding, info, evidence, batch, owners)
+            .await
+    }
+
+    pub(crate) async fn create_initial_inner<
+        B: Backend,
+        C: Clock,
+        E: Entropy,
+        A: Authority,
+        R: Records,
+        W,
+    >(
+        &self,
         backend: B,
         binding: ckmg::Binding,
         info: ckmg::DeviceInfo,
