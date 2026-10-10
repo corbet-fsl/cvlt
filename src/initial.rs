@@ -7,6 +7,8 @@ use std::rc::Rc;
 
 mod publication;
 pub use publication::InitialPublication;
+mod lineage;
+pub use lineage::InitialLineageRead;
 
 const OWNER: &str = "initial-creation";
 const INNER: &[u8] = b"common-root-store";

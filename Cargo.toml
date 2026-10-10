@@ -23,7 +23,7 @@ native-records = ["ckmg/native-records", "dep:cmsh"]
 [dependencies]
 cwlt = { git = "https://git.corbet.ch/corbet-foss/cwlt.git", branch = "v01", default-features = false, features = ["passport", "record"], optional = true }
 cchr = { git = "https://git.corbet.ch/corbet-foss/cchr.git", branch = "v01" }
-ckyh = { git = "https://git.corbet.ch/corbet-foss/ckyh.git", branch = "v01", default-features = false }
+ckyh = { git = "https://git.corbet.ch/corbet-foss/ckyh", branch = "main", default-features = false }
 cprz = { git = "https://git.corbet.ch/corbet-foss/cprz.git", branch = "v01", default-features = false }
 cprz-pad = { git = "https://git.corbet.ch/corbet-foss/cprz.git", branch = "v01" }
 cdht = { git = "https://git.corbet.ch/corbet-foss/cdht.git", branch = "v01" }
@@ -40,14 +40,14 @@ zeroize = { version = "1", features = ["derive"] }
 cmsh = { git = "https://git.corbet.ch/corbet-libs/cmsh.git", branch = "v01", features = ["veilid"], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-ckyh = { git = "https://git.corbet.ch/corbet-foss/ckyh.git", branch = "v01", default-features = false, features = ["server"] }
-crlt = { git = "https://git.corbet.ch/corbet-foss/crlt.git", branch = "v01" }
+ckyh = { git = "https://git.corbet.ch/corbet-foss/ckyh", branch = "main", default-features = false, features = ["server"] }
+crlt = { git = "https://git.corbet.ch/corbet-foss/crlt", branch = "main" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tempfile = "3"
 
 [dev-dependencies]
 ed25519-dalek = { version = "3.0.0", features = ["digest"] }
-csgn = { git = "https://git.corbet.ch/corbet-foss/csgn.git", branch = "v01", default-features = false, features = ["volatile-signer"] }
+csgn = { git = "https://git.corbet.ch/corbet-foss/csgn", branch = "main", default-features = false, features = ["volatile-signer"] }
 cpky = { git = "https://git.corbet.ch/corbet-foss/cpky.git", branch = "v01", features = ["test-authenticator"] }
 base64 = "0.22"
 futures-executor = "0.3"

@@ -135,7 +135,7 @@ impl<B: Backend> InitialCreation<B> {
     fn validate_conflict(&self, state: &cdht::ClientState) -> Result<(), InitialError> {
         let mut validated =
             cdht::Dht::with_state(cdht::LocalBackend::new(Verifier), Verifier, state.clone());
-        if validated.state() != state || !state.queue().is_empty() {
+        if validated.state() != state {
             return Err(InitialError::Invalid);
         }
         let retained = self.retained()?;
@@ -144,7 +144,16 @@ impl<B: Backend> InitialCreation<B> {
             .decode()
             .map_err(InitialError::Publication)?;
         let value = retained.value.decode().map_err(InitialError::Publication)?;
-        // An empty queue alone is not conflict evidence. The original client
+        // Flush removes a stale obligation; a forced read must retain it. No
+        // other queued obligation belongs to this single genesis operation.
+        let mut original = cdht::Dht::new(cdht::LocalBackend::new(Verifier), Verifier);
+        original
+            .queue_original(&descriptor, 0, &value)
+            .map_err(InitialError::Publication)?;
+        if !state.queue().is_empty() && state.queue() != original.state().queue() {
+            return Err(InitialError::Invalid);
+        }
+        // The queue shape alone is not conflict evidence. The original client
         // must authenticate an actual cached value that fences the exact retained
         // pair. This is a disposable validation client and performs no I/O.
         if !matches!(
@@ -155,6 +164,32 @@ impl<B: Backend> InitialCreation<B> {
         ) {
             return Err(InitialError::Invalid);
         }
+        Ok(())
+    }
+
+    pub(super) async fn retain_conflict(
+        &mut self,
+        state: &cdht::ClientState,
+    ) -> Result<(), InitialError> {
+        self.validate_conflict(state)?;
+        let bytes = serde_json::to_vec(state).map_err(|_| InitialError::Invalid)?;
+        if bytes.len() > cwst::MAX_VALUE_BYTES {
+            return Err(InitialError::Storage(cwst::Error::TooLarge));
+        }
+        self.store
+            .commit(
+                4,
+                *self.pending.receipt().operation.as_bytes(),
+                &[cwst::Change::Put {
+                    owner: OWNER,
+                    key: QUEUE,
+                    value: &bytes,
+                }],
+                &[],
+            )
+            .await
+            .map_err(InitialError::Storage)?;
+        self.conflicted_state()?;
         Ok(())
     }
 }
@@ -204,27 +239,7 @@ impl<B: Backend, R: cdht::Backend> InitialPublication<B, R> {
             {
                 return Err(InitialError::Invalid);
             }
-            self.creation.validate_conflict(self.client.state())?;
-            let bytes =
-                serde_json::to_vec(self.client.state()).map_err(|_| InitialError::Invalid)?;
-            if bytes.len() > cwst::MAX_VALUE_BYTES {
-                return Err(InitialError::Storage(cwst::Error::TooLarge));
-            }
-            self.creation
-                .store
-                .commit(
-                    4,
-                    *self.creation.pending.receipt().operation.as_bytes(),
-                    &[cwst::Change::Put {
-                        owner: OWNER,
-                        key: QUEUE,
-                        value: &bytes,
-                    }],
-                    &[],
-                )
-                .await
-                .map_err(InitialError::Storage)?;
-            self.creation.conflicted_state()?;
+            self.creation.retain_conflict(self.client.state()).await?;
         }
         Ok((self.creation, report))
     }

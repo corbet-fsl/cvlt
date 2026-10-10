@@ -4,6 +4,10 @@ use super::*;
 use cdht::Backend as _;
 use ed25519_dalek::{Digest, Sha512, SigningKey};
 
+#[cfg(not(target_arch = "wasm32"))]
+#[path = "initial_lineage.rs"]
+mod lineage_tests;
+
 // Public fixture material only. Production still exposes no root signer.
 struct FixtureEntropy;
 impl Entropy for FixtureEntropy {
