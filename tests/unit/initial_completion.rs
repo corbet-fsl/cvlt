@@ -303,6 +303,7 @@ impl ExactCompletion {
     }
     fn check_exact(&self, r: &ckmg::CompletionAuthorization<'_>) -> Result<(), ckmg::Error> {
         if r.receipt != &self.receipt
+            || r.authority_reference != b"original passkey"
             || r.location != &self.location
             || r.sealed_digest != &self.keys
             || r.intent.outer_generation != 2
