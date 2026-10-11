@@ -18,6 +18,7 @@ test = true
 [features]
 default = []
 wallet = ["dep:cwlt", "ckmg/passport", "ckmg/wallet-engine"]
+wallet-native-prover = ["wallet", "cwlt/native-prover"]
 native-records = ["ckmg/native-records", "dep:cmsh"]
 
 [dependencies]
