@@ -67,6 +67,14 @@ impl<B: Backend> InitialCreation<B> {
         {
             return Err(InitialError::Invalid);
         }
+        let provenance = evidence
+            .initial_acknowledgment(&inspector, sealed)
+            .map_err(InitialError::Open)?;
+        if provenance.seed() != self.enrollment_commitment()?
+            || provenance.publication() != self.publication_commitment()?
+        {
+            return Err(InitialError::Invalid);
+        }
         Ok(AcknowledgedInitialCandidate {
             inspector,
             sealed: Zeroizing::new(sealed.to_vec()),
@@ -78,6 +86,21 @@ impl<B: Backend> InitialCreation<B> {
 }
 
 impl AcknowledgedInitialCandidate {
+    pub(crate) fn from_checkpoint(
+        inspector: ckmg::CheckpointInspector,
+        sealed: &[u8],
+        evidence: crate::LineageEvidence,
+        initial: &ckmg::InitialCheckpointProvenance,
+    ) -> Self {
+        Self {
+            inspector,
+            sealed: Zeroizing::new(sealed.to_vec()),
+            evidence,
+            seed: initial.seed(),
+            publication: initial.publication(),
+        }
+    }
+
     /// Immutable original encrypted enrollment commitment; not authority.
     pub fn enrollment_commitment(&self) -> [u8; 32] {
         self.seed

@@ -151,20 +151,52 @@ impl<B: Backend> InitialAcknowledgment<B> {
             {
                 return Err(InitialError::Invalid);
             }
+            let mut mutations = self
+                .evidence
+                .retained_mutations()
+                .map_err(|_| InitialError::Invalid)?;
+            let enrolled = self
+                .store
+                .read(OWNER, ENROLLMENT)
+                .map_err(InitialError::Storage)?
+                .is_some();
+            if enrolled {
+                let provenance = self
+                    .completion
+                    .initial_acknowledgment()
+                    .map_err(InitialError::Keys)?;
+                let candidate = ckmg::UnenrolledCreation::reopen(
+                    &self.opening.prf,
+                    &self.opening.scope,
+                    required(&self.store, ENROLLMENT)?,
+                )
+                .map_err(InitialError::Keys)?;
+                if candidate.commitment().map_err(InitialError::Keys)? != provenance.seed() {
+                    return Err(InitialError::Invalid);
+                }
+                mutations.push(crate::Mutation {
+                    owner: "cvlt-initial-ack".into(),
+                    key: receipt.operation.as_bytes().to_vec(),
+                    value: Some(provenance.to_bytes().map_err(InitialError::Keys)?),
+                });
+            }
             let _batch = key_store
                 .stage(crate::Batch {
                     expected: 1,
                     operation: *receipt.operation.as_bytes(),
-                    mutations: self
-                        .evidence
-                        .retained_mutations()
-                        .map_err(|_| InitialError::Invalid)?,
+                    mutations,
                     outputs: vec![],
                 })
                 .map_err(|_| InitialError::Invalid)?;
-            keys.acknowledge(receipt.operation)
-                .await
-                .map_err(InitialError::Keys)?;
+            if enrolled {
+                keys.acknowledge_initial(&mut self.completion)
+                    .await
+                    .map_err(InitialError::Keys)?;
+            } else {
+                keys.acknowledge(receipt.operation)
+                    .await
+                    .map_err(InitialError::Keys)?;
+            }
             keys.lock();
         }
         let (inner, sealed) = {
@@ -180,6 +212,22 @@ impl<B: Backend> InitialAcknowledgment<B> {
                 .map_err(InitialError::Storage)?
                 .ok_or(InitialError::Invalid)?
                 .to_vec();
+            if self
+                .store
+                .read(OWNER, ENROLLMENT)
+                .map_err(InitialError::Storage)?
+                .is_some()
+            {
+                let provenance = self
+                    .evidence
+                    .initial_acknowledgment(
+                        &self.opening.inspector().map_err(InitialError::Open)?,
+                        &sealed,
+                    )
+                    .map_err(InitialError::Open)?;
+                crate::retention::check_initial_ack(&store, &provenance)
+                    .map_err(InitialError::Storage)?;
+            }
             let retained = crate::LineageEvidence::load(&store, receipt.operation.as_bytes())
                 .map_err(|_| InitialError::Invalid)?
                 .ok_or(InitialError::Invalid)?;
@@ -325,5 +373,12 @@ struct BorrowAuthority<'a, A>(&'a mut A);
 impl<A: Authority> Authority for BorrowAuthority<'_, A> {
     async fn check(&mut self, request: ckmg::Authorization<'_>) -> Result<(), ckmg::Error> {
         self.0.check(request).await
+    }
+
+    fn check_completion_current(
+        &mut self,
+        request: ckmg::CompletionAuthorization<'_>,
+    ) -> Result<u64, ckmg::Error> {
+        self.0.check_completion_current(request)
     }
 }

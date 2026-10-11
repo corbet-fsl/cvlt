@@ -85,6 +85,23 @@ impl<B: Backend> InitialCreation<B> {
         )
         .await
         .map_err(InitialError::Storage)?;
+        if self
+            .store
+            .read(OWNER, ENROLLMENT)
+            .map_err(InitialError::Storage)?
+            .is_some()
+        {
+            let provenance = evidence
+                .initial_acknowledgment(&inspector, sealed)
+                .map_err(InitialError::Open)?;
+            if provenance.seed() != self.enrollment_commitment()?
+                || provenance.publication() != self.publication_commitment()?
+            {
+                return Err(InitialError::Invalid);
+            }
+            crate::retention::check_initial_ack(&inner, &provenance)
+                .map_err(InitialError::Storage)?;
+        }
         let retained = crate::LineageEvidence::load(&inner, &operation)
             .map_err(|_| InitialError::Invalid)?
             .ok_or(InitialError::Invalid)?;

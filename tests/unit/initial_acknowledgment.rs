@@ -8,18 +8,20 @@ use std::cell::RefCell;
 #[path = "initial_recovery_publication.rs"]
 mod recovery_publication_tests;
 
-struct Member {
+pub(super) struct Member {
     original: ExactCompletion,
     credential: Vec<u8>,
     evidence: crate::LineageEvidence,
     current: Rc<RefCell<cchr::Charter>>,
     records: Option<crate::LineageRecords<crate::TorLineageRecord<'static, Network>>>,
     completion_started: bool,
+    generation: u64,
+    inner_operation: [u8; 32],
     uses: Rc<Cell<u32>>,
     time: Rc<Cell<u64>>,
 }
 impl Member {
-    fn new(initial: &InitialCreation<Destination>, key: &SameKey) -> Self {
+    pub(super) fn new(initial: &InitialCreation<Destination>, key: &SameKey) -> Self {
         let mut signer =
             csgn::Signer::new("garden", csgn::SecretKey::from_seed(&mut [77; 32]), 9, 1000)
                 .unwrap();
@@ -30,6 +32,8 @@ impl Member {
             current: Rc::new(RefCell::new(charter(&mut signer))),
             records: None,
             completion_started: false,
+            generation: initial.store.version().unwrap(),
+            inner_operation: initial_operation(&initial.store).unwrap(),
             uses: Rc::new(Cell::new(0)),
             time: Rc::new(Cell::new(10)),
         }
@@ -47,10 +51,10 @@ impl Member {
             || r.authority_reference != self.credential.as_slice()
             || r.location != &self.original.location
             || r.sealed_digest != &self.original.keys
-            || r.intent.outer_generation != 4
+            || r.intent.outer_generation != self.generation
             || r.intent.outer_digest != self.original.outer
             || r.intent.inner_version != 1
-            || r.intent.inner_operation != [8; 32]
+            || r.intent.inner_operation != self.inner_operation
             || r.intent.inner_digest != self.original.inner
             || r.intent.nonce != [71; 24]
             || r.intent.packed_evidence != self.evidence.packed().unwrap().as_slice()
@@ -138,6 +142,10 @@ impl Authority for Member {
     }
 }
 
+pub(super) fn recovery_member(member: Member) -> impl Authority {
+    recovery_publication_tests::RecoveryMember(member, false)
+}
+
 async fn staged(destination: Destination) -> (InitialCreation<Destination>, SameKey, Network) {
     let (initial, mut key) = genuine(destination.clone()).await;
     let pair = initial.retained().unwrap();
@@ -157,7 +165,7 @@ async fn staged(destination: Destination) -> (InitialCreation<Destination>, Same
     .await;
     (initial, key, network)
 }
-async fn attempt(
+pub(super) async fn attempt(
     initial: InitialCreation<Destination>,
     network: Network,
     member: &mut Member,

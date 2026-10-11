@@ -10,6 +10,7 @@ pub struct PreparedRecovery<'attempt> {
     checked_at: u64,
     available: std::cell::Cell<bool>,
     floors: crate::records::tor::ReadFloors,
+    initial: Option<&'attempt ckmg::InitialCheckpointProvenance>,
 }
 
 /// Verified public preparation, carrying only original sealed Keys bytes and
@@ -18,6 +19,8 @@ pub struct RecoveryCandidate {
     opening: PreparedOpen,
     sealed: zeroize::Zeroizing<Vec<u8>>,
     evidence: Vec<u8>,
+    initial: Option<ckmg::InitialCheckpointProvenance>,
+    acknowledged: Option<crate::AcknowledgedInitialCandidate>,
 }
 
 impl PreparedOpen {
@@ -48,11 +51,51 @@ impl PreparedOpen {
             opening: self,
             sealed: zeroize::Zeroizing::new(checkpoint.sealed().to_vec()),
             evidence: wire,
+            initial: None,
+            acknowledged: None,
+        })
+    }
+
+    /// Authenticate the original normal initial ACK through the PRF checkpoint.
+    /// This grants no authority: the caller must freshly join the genuine same-key
+    /// enrollment/publication lease and forced lineage before `authorize`.
+    /// Legacy checkpoints and all later lineage mutations refuse this route.
+    pub fn prepare_initial_recovery(
+        self,
+        checkpoint: &RecordCheckpoint,
+    ) -> Result<RecoveryCandidate, OpenError> {
+        let evidence = checkpoint.evidence().ok_or(OpenError::RecoveryRequired)?;
+        let initial = evidence.initial_acknowledgment(&self.inspector()?, checkpoint.sealed())?;
+        let wire = evidence
+            .to_bytes()
+            .map_err(|_| OpenError::Records(crate::RecordError::Invalid))?;
+        let acknowledged = crate::AcknowledgedInitialCandidate::from_checkpoint(
+            self.inspector()?,
+            checkpoint.sealed(),
+            crate::LineageEvidence::from_bytes(&wire)
+                .map_err(|_| OpenError::Records(crate::RecordError::Invalid))?,
+            &initial,
+        );
+        Ok(RecoveryCandidate {
+            opening: self,
+            sealed: zeroize::Zeroizing::new(checkpoint.sealed().to_vec()),
+            evidence: wire,
+            initial: Some(initial),
+            acknowledged: Some(acknowledged),
         })
     }
 }
 
 impl RecoveryCandidate {
+    /// Original authenticated ACK evidence for the dedicated current same-key
+    /// recovery checker. No certificate or timestamp supplied by a caller can
+    /// manufacture this preparation from a pending or legacy checkpoint.
+    pub fn acknowledged_initial(&self) -> Result<&crate::AcknowledgedInitialCandidate, OpenError> {
+        self.acknowledged
+            .as_ref()
+            .ok_or(OpenError::RecoveryRequired)
+    }
+
     /// Borrow only the approved provisional lineage read key for this attempt.
     /// Current policy and fresh HTTPS are rechecked by the supplied original
     /// recovery authority. Drop the reader before consuming/dropping the attempt.
@@ -90,6 +133,7 @@ impl RecoveryCandidate {
             checked_at,
             available: std::cell::Cell::new(true),
             floors: crate::records::tor::ReadFloors::default(),
+            initial: self.initial.as_ref(),
         })
     }
 }
@@ -318,6 +362,9 @@ impl PreparedRecovery<'_> {
             .ok_or(OpenError::Keys(ckmg::Error::MissingCheckpoint))?;
         if blake3::hash(sealed).as_bytes() != self.custody.inspection().sealed_digest() {
             return Err(OpenError::Keys(ckmg::Error::Unauthorized));
+        }
+        if let Some(initial) = self.initial {
+            crate::retention::check_initial_ack(&store, initial).map_err(OpenError::Storage)?;
         }
         if let Some(carrier) = crate::read_floors::load(&store).map_err(OpenError::Storage)? {
             let now = owners.clock.now().map_err(OpenError::Keys)?;

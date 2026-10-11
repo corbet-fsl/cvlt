@@ -5,7 +5,7 @@ use super::*;
 #[path = "initial_recovery_transport.rs"]
 mod transport_tests;
 
-struct RecoveryMember(Member, bool);
+pub(super) struct RecoveryMember(pub(super) Member, pub(super) bool);
 impl RecoveryMember {
     fn exact_use(&self, r: &ckmg::Authorization<'_>) -> Result<(), ckmg::Error> {
         let (lineage, author) = self.0.original.receipt.attested_lineage()?;

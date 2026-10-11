@@ -70,6 +70,17 @@ impl std::fmt::Debug for PreparedLineageEvidence {
     }
 }
 impl LineageEvidence {
+    pub(crate) fn initial_acknowledgment(
+        &self,
+        inspector: &ckmg::CheckpointInspector,
+        sealed: &[u8],
+    ) -> Result<ckmg::InitialCheckpointProvenance, crate::OpenError> {
+        let packed = self.packed().map_err(crate::OpenError::Records)?;
+        inspector
+            .initial_acknowledgment(sealed, &self.receipt, &packed)
+            .map_err(crate::OpenError::Keys)
+    }
+
     pub(crate) fn matches_receipt(&self, receipt: &Receipt) -> bool {
         &self.receipt == receipt
     }
@@ -374,4 +385,18 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W> Vault<B, C, 
         lock.0 = None;
         Ok(committed)
     }
+}
+
+// This carrier is committed in the same original inner Store batch as the
+// normal initial Keys ACK. Public matching bytes never replace its Store MAC.
+pub(crate) fn check_initial_ack<B: Backend>(
+    store: &Store<B>,
+    initial: &ckmg::InitialCheckpointProvenance,
+) -> Result<(), cwst::Error> {
+    let expected = initial.to_bytes().map_err(|_| cwst::Error::Corrupt)?;
+    if store.read("cvlt-initial-ack", initial.operation().as_bytes())? != Some(expected.as_slice())
+    {
+        return Err(cwst::Error::Corrupt);
+    }
+    Ok(())
 }

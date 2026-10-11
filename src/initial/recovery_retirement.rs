@@ -298,6 +298,26 @@ impl<B: Backend> InitialCreation<B> {
         {
             return Err(InitialError::Invalid);
         }
+        if self
+            .store
+            .read(OWNER, ENROLLMENT)
+            .map_err(InitialError::Storage)?
+            .is_some()
+        {
+            let provenance = evidence
+                .initial_acknowledgment(
+                    &self.opening.inspector().map_err(InitialError::Open)?,
+                    checkpoint.sealed(),
+                )
+                .map_err(InitialError::Open)?;
+            if provenance.seed() != self.enrollment_commitment()?
+                || provenance.publication() != self.publication_commitment()?
+            {
+                return Err(InitialError::Invalid);
+            }
+            crate::retention::check_initial_ack(&inner, &provenance)
+                .map_err(InitialError::Storage)?;
+        }
         let checked_at = bootstrap.checked_at();
         let mut selected = AcknowledgedRecovery {
             bootstrap,

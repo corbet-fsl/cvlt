@@ -41,6 +41,8 @@ struct Completion {
     original: ExactCompletion,
     credential: Vec<u8>,
     packed: Vec<u8>,
+    generation: u64,
+    inner_operation: [u8; 32],
     called: bool,
 }
 impl Completion {
@@ -49,10 +51,10 @@ impl Completion {
             || r.authority_reference != self.credential.as_slice()
             || r.location != &self.original.location
             || r.sealed_digest != &self.original.keys
-            || r.intent.outer_generation != 2
+            || r.intent.outer_generation != self.generation
             || r.intent.outer_digest != self.original.outer
             || r.intent.inner_version != 1
-            || r.intent.inner_operation != [8; 32]
+            || r.intent.inner_operation != self.inner_operation
             || r.intent.inner_digest != self.original.inner
             || r.intent.nonce != [71; 24]
             || r.intent.packed_evidence != self.packed
@@ -247,6 +249,24 @@ async fn genuine(destination: Destination) -> (InitialCreation<Destination>, Sam
         )
         .await
         .unwrap();
+    let (prepared, key) = certify_creation(
+        created,
+        client,
+        descriptor,
+        certificate,
+        renewed_certificate,
+    )
+    .await;
+    retain_certified(prepared, key).await
+}
+
+async fn certify_creation(
+    created: InitialCreation<Destination>,
+    mut client: cpky::Client<SoftwareAuthenticator>,
+    descriptor: ckyh::lineage::PublicCredential,
+    certificate: Vec<u8>,
+    renewed_certificate: Vec<u8>,
+) -> (InitialCreation<Destination>, SameKey) {
     let challenge = created.receipt().passkey_challenge().unwrap();
     let (public, custody) = client
         .sign_in(serde_json::to_value(descriptor.request(challenge)).unwrap())
@@ -279,33 +299,45 @@ async fn genuine(destination: Destination) -> (InitialCreation<Destination>, Sam
         10,
     )
     .unwrap();
-    let packed = evidence.evidence().packed().unwrap().to_vec();
     let evidence_bytes = evidence.evidence().to_bytes().unwrap();
     let initial = created
         .prepare(&evidence, 30, &mut TestClock(10), &mut FixtureEntropy)
         .await
         .unwrap();
+    (
+        initial,
+        SameKey {
+            client,
+            descriptor,
+            evidence: evidence_bytes,
+            retained_checkpoint: vec![],
+            renewed_certificate,
+        },
+    )
+}
+
+async fn retain_certified(
+    initial: InitialCreation<Destination>,
+    mut key: SameKey,
+) -> (InitialCreation<Destination>, SameKey) {
     let mut completion = Completion {
         original: ExactCompletion::new(&initial),
-        credential,
-        packed,
+        credential: key.descriptor.credential_id().to_vec(),
+        packed: crate::LineageEvidence::from_bytes(&key.evidence)
+            .unwrap()
+            .packed()
+            .unwrap()
+            .to_vec(),
+        generation: initial.store.version().unwrap(),
+        inner_operation: initial_operation(&initial.store).unwrap(),
         called: false,
     };
     let retained = initial
         .retain(&mut TestClock(10), &mut completion)
         .await
         .unwrap();
-    let retained_checkpoint = retained.store.sealed_checkpoint().unwrap().to_vec();
-    (
-        retained,
-        SameKey {
-            client,
-            descriptor,
-            evidence: evidence_bytes,
-            retained_checkpoint,
-            renewed_certificate,
-        },
-    )
+    key.retained_checkpoint = retained.store.sealed_checkpoint().unwrap().to_vec();
+    (retained, key)
 }
 
 #[derive(Clone)]
