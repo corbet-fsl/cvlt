@@ -15,6 +15,8 @@ pub use acknowledgment::InitialAcknowledgment;
 mod enrollment;
 pub use enrollment::UnenrolledInitial;
 mod acknowledged;
+mod reauthorization;
+pub use reauthorization::{AcknowledgedInitialCandidate, CurrentInitialLineage};
 mod recovery_publication;
 mod recovery_retirement;
 mod recovery_transport;

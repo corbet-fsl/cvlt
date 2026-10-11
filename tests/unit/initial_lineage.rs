@@ -19,6 +19,7 @@ struct SameKey {
     descriptor: ckyh::lineage::PublicCredential,
     evidence: Vec<u8>,
     retained_checkpoint: Vec<u8>,
+    renewed_certificate: Vec<u8>,
 }
 impl SameKey {
     async fn opening(&mut self) -> PreparedOpen {
@@ -208,11 +209,17 @@ async fn genuine(destination: Destination) -> (InitialCreation<Destination>, Sam
         "garden",
         csgn::SecretKey::from_seed(&mut [77; 32]),
         9,
-        1000,
+        60,
     )
     .await
     .unwrap();
     let certificate = registration.sign(&mut persistent, 10).await.unwrap();
+    let renewed_certificate = server
+        .registration_certificate(user, stored.credential_id(), "original")
+        .unwrap()
+        .sign(&mut persistent, 70)
+        .await
+        .unwrap();
     let input = PreparedOpen::new(unlock, "garden").unwrap();
     let device = input.device().unwrap();
     let created = input
@@ -296,6 +303,7 @@ async fn genuine(destination: Destination) -> (InitialCreation<Destination>, Sam
             descriptor,
             evidence: evidence_bytes,
             retained_checkpoint,
+            renewed_certificate,
         },
     )
 }
@@ -631,5 +639,64 @@ shared!(
             assert_eq!(network.sets.get(), 0);
             assert_eq!(destination.writes.get(), 4);
         }
+    }
+);
+
+// This is original-owner cryptographic verification only. The production
+// acknowledged-candidate constructor separately enforces the durable phase and
+// initial enrollment provenance; these older lower fixtures cannot mint it.
+shared!(
+    renewed_same_key_verifies_immutable_assertion_at_present_time_only,
+    {
+        let (initial, key) = genuine(Destination::new()).await;
+        assert!(initial.acknowledged_candidate().is_err());
+        let original = crate::LineageEvidence::from_bytes(&key.evidence).unwrap();
+        let unchanged = original.to_bytes().unwrap();
+        let mut signer =
+            csgn::Signer::new("garden", csgn::SecretKey::from_seed(&mut [77; 32]), 9, 1000)
+                .unwrap();
+        let mut owner = charter(&mut signer);
+        let current = owner.current(70).unwrap();
+        assert!(original.verify(current, "original", 70).is_err());
+        let renewed = original
+            .reauthorize_initial(current, &key.renewed_certificate, "original", 70)
+            .unwrap();
+        assert_eq!(
+            renewed.lineage(70).unwrap(),
+            initial.receipt().attested_lineage().unwrap().0
+        );
+        assert_eq!(
+            renewed.credential_id(70).unwrap(),
+            key.descriptor.credential_id()
+        );
+        assert!(renewed.lineage(69).is_err());
+        assert!(
+            original
+                .reauthorize_initial(current, &key.renewed_certificate, "foreign", 70)
+                .is_err()
+        );
+        assert!(
+            original
+                .reauthorize_initial(current, &key.renewed_certificate, "original", 130)
+                .is_err()
+        );
+        let (_, other) = genuine(Destination::new()).await;
+        assert!(
+            original
+                .reauthorize_initial(current, &other.renewed_certificate, "original", 70)
+                .is_err()
+        );
+        assert_eq!(original.to_bytes().unwrap(), unchanged);
+        let mut revoked = charter_members(&mut signer, &["original"]);
+        assert!(
+            original
+                .reauthorize_initial(
+                    revoked.current(70).unwrap(),
+                    &key.renewed_certificate,
+                    "original",
+                    70,
+                )
+                .is_err()
+        );
     }
 );

@@ -102,6 +102,22 @@ impl<B: Backend> InitialCreation<B> {
         Ok((self, report))
     }
 
+    /// Number of exact original outputs still present in the authenticated
+    /// durable queue. This is progress only, never delivery or member authority.
+    pub fn pending_recovery_outputs(&self) -> Result<usize, InitialError> {
+        if !matches!(
+            self.phase()?,
+            InitialPhase::RecoveryStaged | InitialPhase::RecoveryProgress
+        ) {
+            return Err(InitialError::Invalid);
+        }
+        let (state, conflict, _) = self.recovery_progress()?;
+        if conflict {
+            return Err(InitialError::Invalid);
+        }
+        Ok(state.queue().len())
+    }
+
     pub(super) fn recovery_progress(&self) -> Result<(cdht::ClientState, bool, u64), InitialError> {
         let version = logical_version(&self.store)?;
         if version == 6 {

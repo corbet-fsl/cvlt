@@ -198,6 +198,25 @@ impl LineageEvidence {
         )
     }
 
+    // Reachable publicly only through the sealed actual acknowledged-initial
+    // candidate. Ordinary evidence verification retains its original semantics.
+    pub(crate) fn reauthorize_initial<'a>(
+        &'a self,
+        current: &'a cchr::VerifiedCharter,
+        current_certificate: &'a [u8],
+        expected_member: &str,
+        now: u64,
+    ) -> Result<VerifiedLineageObservation<'a>, LineageError> {
+        verify_lineage(
+            current,
+            &self.receipt,
+            &self.assertion,
+            current_certificate,
+            expected_member,
+            now,
+        )
+    }
+
     /// Load three original public values from authenticated local Storage. This
     /// grants no currentness: `verify` remains mandatory at every point of use.
     /// An absent triple is None; partial/corrupt triples are refused.
