@@ -73,23 +73,26 @@ type TestVault = Vault<Memory, Clock, ckmg::SystemEntropy, TestOnlyAuthority, No
 // Real PRF/Keys/Memory store with actual KeyStore compare_exchange_wrapped.
 // The create receipt is acknowledged here only as explicit local test setup.
 async fn base() -> (TestVault, Rc<Cell<bool>>) {
+    base_for(SCOPE, MEMBER, false).await
+}
+async fn base_for(scope: &str, member: &str, global: bool) -> (TestVault, Rc<Cell<bool>>) {
     use ckmg::passkey::PrfOutput;
     let prf = PrfOutput::from_bytes(&[7; 32]).unwrap();
-    let device = ckmg::passkey::device_public_key(&prf, SCOPE).unwrap();
+    let device = ckmg::passkey::device_public_key(&prf, scope).unwrap();
     let deny = Rc::new(Cell::new(false));
     let authority = TestOnlyAuthority {
-        binding: Binding::new(SCOPE, MEMBER).unwrap(),
+        binding: Binding::new(scope, member).unwrap(),
         device: Some(device),
         created: false,
         deny_use: deny.clone(),
     };
-    let cipher = store_cipher(&prf, SCOPE).unwrap();
-    let store = cwst::Store::create(Memory::new(), &cipher, SCOPE)
+    let cipher = store_cipher(&prf, scope).unwrap();
+    let store = cwst::Store::create(Memory::new(), &cipher, scope)
         .await
         .unwrap();
     let mut vault = Vault::new(
         store,
-        SCOPE,
+        scope,
         Clock,
         ckmg::SystemEntropy,
         authority,
@@ -109,18 +112,33 @@ async fn base() -> (TestVault, Rc<Cell<bool>>) {
         .keys()
         .create_scope(
             &prf,
-            Binding::new(SCOPE, MEMBER).unwrap(),
+            Binding::new(scope, member).unwrap(),
             DeviceInfo::new("fixture", b"fixture-credential").unwrap(),
             b"fixture-create",
         )
         .await
         .unwrap();
     drop(guard);
+    let mutations = if global {
+        let storage = vault.storage.clone();
+        vec![
+            crate::wallet::global::prepare_initial_passport(
+                vault.keys(),
+                &storage,
+                &receipt,
+                &mut StdRng::seed_from_u64(71),
+            )
+            .await
+            .unwrap(),
+        ]
+    } else {
+        vec![]
+    };
     let guard = vault
         .stage_keys(Batch {
             expected: 1,
             operation: [62; 32],
-            mutations: vec![],
+            mutations,
             outputs: vec![],
         })
         .unwrap();
@@ -369,4 +387,83 @@ async fn cancel_post_commit_denial_suppresses_output_but_keeps_commit() {
     assert!(deny.get());
     let after = vault.storage().lock().await.version().unwrap();
     assert_eq!(after, before + 1);
+}
+
+// These exercise the production holder batch/restore composition against actual
+// Keys/CWST/CPSD owners. The fixture authority above remains setup-only; global
+// HTTPS/certificate/forced Tor qualification belongs to the integrated journey.
+#[tokio::test]
+async fn global_holder_initial_ack_and_restore_need_no_community_record() {
+    let (vault, deny) = base_for("wallet", "fda91f17-ccbd-4f83-93f8-3beaf10dbd2b", true).await;
+    assert_eq!(vault.storage().lock().await.version().unwrap(), 2);
+    let mut vault = vault.restore_global_passport().await.unwrap();
+    let community = CommunityId::new(b"alpha").unwrap();
+    let original = vault
+        .with_global_passport(|holder| {
+            assert!(holder.attributes().is_none());
+            holder.pseudonym(&community)
+        })
+        .await
+        .unwrap();
+    let mut rng = StdRng::seed_from_u64(73);
+    vault
+        .cancel_global_passport_issuance([73; 32], &mut rng)
+        .await
+        .unwrap();
+    assert_eq!(
+        vault
+            .with_global_passport(|holder| holder.pseudonym(&community))
+            .await
+            .unwrap(),
+        original
+    );
+    assert!(
+        vault
+            .with_global_passport(|_| {
+                deny.set(true);
+                "withheld presentation"
+            })
+            .await
+            .is_err()
+    );
+    let called = Cell::new(false);
+    assert!(
+        vault
+            .with_global_passport(|_| called.set(true))
+            .await
+            .is_err()
+    );
+    assert!(!called.get());
+}
+
+#[tokio::test]
+async fn global_restore_refuses_absence_foreign_scope_and_wrong_holder() {
+    let (vault, _) = base_for("wallet", "fda91f17-ccbd-4f83-93f8-3beaf10dbd2b", false).await;
+    let storage = vault.storage.clone();
+    let before = storage.lock().await.sealed_checkpoint().unwrap().to_vec();
+    assert!(matches!(
+        vault.restore_global_passport().await,
+        Err(WalletRestoreError::Passport(_))
+    ));
+    assert_eq!(storage.lock().await.sealed_checkpoint().unwrap(), before);
+    let (mut vault, _) = base().await;
+    seed_both(&mut vault).await;
+    assert!(matches!(
+        vault.restore_global_passport().await,
+        Err(WalletRestoreError::Scope)
+    ));
+    let (vault, _) = base_for("wallet", "fda91f17-ccbd-4f83-93f8-3beaf10dbd2b", false).await;
+    cwlt::passport::DurableHolder::create(
+        cwlt::PassportHolder::from_seed(&mut [99; 32]),
+        &mut *vault.storage().lock().await,
+        "wallet",
+        [74; 32],
+        &mut StdRng::seed_from_u64(74),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        vault.restore_global_passport().await,
+        Err(WalletRestoreError::Passport(_))
+    ));
 }

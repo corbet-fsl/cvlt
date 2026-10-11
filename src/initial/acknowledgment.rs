@@ -104,6 +104,21 @@ impl<B: Backend> InitialAcknowledgment<B> {
         self.completion
             .check_current(&mut clock, authority)
             .map_err(InitialError::Keys)?;
+        // The global holder is initialized only inside this genuine creation
+        // transaction. A build without its original owner cannot acknowledge a
+        // wallet checkpoint that would be missing its required custody record.
+        if self.opening.scope == "wallet" && !cfg!(feature = "wallet") {
+            return Err(InitialError::Invalid);
+        }
+        #[cfg(feature = "wallet")]
+        let mut holder_rng = if self.opening.scope == "wallet" {
+            use cwlt::passport::rand::SeedableRng as _;
+            let mut seed = zeroize::Zeroizing::new([0; 32]);
+            entropy.fill(seed.as_mut()).map_err(InitialError::Keys)?;
+            Some(cwlt::passport::rand::rngs::StdRng::from_seed(*seed))
+        } else {
+            None
+        };
         let original_keys = required(&self.store, KEYS)?.to_vec();
         let receipt = self.completion.receipt().clone();
         let original_operation = initial_operation(&self.store)?;
@@ -160,6 +175,18 @@ impl<B: Backend> InitialAcknowledgment<B> {
                 .read(OWNER, ENROLLMENT)
                 .map_err(InitialError::Storage)?
                 .is_some();
+            #[cfg(feature = "wallet")]
+            if let Some(rng) = holder_rng.as_mut() {
+                if !enrolled || lineage.binding.community() != "wallet" {
+                    return Err(InitialError::Invalid);
+                }
+                mutations.push(
+                    crate::wallet::global::prepare_initial_passport(
+                        &mut keys, &storage, &receipt, rng,
+                    )
+                    .await?,
+                );
+            }
             if enrolled {
                 let provenance = self
                     .completion

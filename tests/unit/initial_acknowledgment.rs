@@ -21,15 +21,44 @@ pub(super) struct Member {
     time: Rc<Cell<u64>>,
 }
 impl Member {
+    #[cfg(feature = "wallet")]
+    pub(super) fn revoke_original_member(&mut self, origin: &str) {
+        let binding = &self.original.receipt.attested_lineage().unwrap().0.binding;
+        let mut signer = csgn::Signer::new(
+            binding.community(),
+            csgn::SecretKey::from_seed(&mut [77; 32]),
+            9,
+            1000,
+        )
+        .unwrap();
+        *self.current.borrow_mut() = charter_for(
+            &mut signer,
+            binding.community(),
+            origin,
+            &[binding.member()],
+        );
+    }
     pub(super) fn new(initial: &InitialCreation<Destination>, key: &SameKey) -> Self {
+        let scope = initial
+            .receipt()
+            .attested_lineage()
+            .unwrap()
+            .0
+            .binding
+            .community()
+            .to_owned();
         let mut signer =
-            csgn::Signer::new("garden", csgn::SecretKey::from_seed(&mut [77; 32]), 9, 1000)
-                .unwrap();
+            csgn::Signer::new(&scope, csgn::SecretKey::from_seed(&mut [77; 32]), 9, 1000).unwrap();
         Self {
             original: ExactCompletion::new(initial),
             credential: key.descriptor.credential_id().to_vec(),
             evidence: crate::LineageEvidence::from_bytes(&key.evidence).unwrap(),
-            current: Rc::new(RefCell::new(charter(&mut signer))),
+            current: Rc::new(RefCell::new(charter_for(
+                &mut signer,
+                &scope,
+                &key.origin,
+                &[],
+            ))),
             records: None,
             completion_started: false,
             generation: initial.store.version().unwrap(),
@@ -42,7 +71,11 @@ impl Member {
         let mut owner = self.current.borrow_mut();
         let current = owner.current(now).map_err(|_| ckmg::Error::Unauthorized)?;
         self.evidence
-            .verify(current, "original", now)
+            .verify(
+                current,
+                self.original.receipt.attested_lineage()?.0.binding.member(),
+                now,
+            )
             .map_err(|_| ckmg::Error::Unauthorized)?;
         Ok(())
     }
@@ -144,6 +177,64 @@ impl Authority for Member {
 
 pub(super) fn recovery_member(member: Member) -> impl Authority {
     recovery_publication_tests::RecoveryMember(member, false)
+}
+
+#[cfg(feature = "wallet")]
+pub(super) async fn recovered_wallet_holder(
+    initial: &InitialCreation<Destination>,
+    member: Member,
+) -> (Vec<u8>, Vec<u8>) {
+    let mut current = recovery_publication_tests::RecoveryMember(member, false);
+    let recovered = initial
+        .acknowledged_recovery(&mut TestClock(10), &mut current)
+        .await
+        .unwrap();
+    assert_eq!(recovered.inner.version().unwrap(), 2);
+    assert!(recovered.inner.is_scope("wallet"));
+    let record = recovered
+        .inner
+        .read("cwlt.passport", b"holder.v1")
+        .unwrap()
+        .unwrap()
+        .to_vec();
+    let operation = *initial.receipt().operation.as_bytes();
+    let receipt = recovered.inner.receipt(&operation).unwrap();
+    assert!(receipt.is_commit(&recovered.inner, &operation));
+    assert!(receipt.contains_record(
+        "cwlt.passport",
+        b"holder.v1",
+        blake3::hash(&record).as_bytes()
+    ));
+    let sealed = required(&initial.store, ACKNOWLEDGED_KEYS).unwrap();
+    let provenance = recovered
+        .evidence
+        .initial_acknowledgment(&initial.opening.inspector().unwrap(), sealed)
+        .unwrap();
+    crate::retention::check_initial_ack(&recovered.inner, &provenance).unwrap();
+    // Keep the same actual current Charter/certificate/forced Records checker.
+    // Bootstrap success changes no fixture permission and grants no Create.
+    let mut vault = crate::Vault::new(
+        recovered.inner,
+        "wallet",
+        TestClock(10),
+        FixtureEntropy,
+        current.0,
+        UnavailableRecords,
+        (),
+    )
+    .unwrap();
+    vault
+        .keys()
+        .unlock(&initial.opening.prf, "wallet")
+        .await
+        .unwrap();
+    let mut holder = vault.restore_global_passport().await.unwrap();
+    let scope = cwlt::passport::CommunityId::new(b"garden").unwrap();
+    let nym = holder
+        .with_global_passport(|session| session.pseudonym(&scope).to_bytes().to_vec())
+        .await
+        .unwrap();
+    (record, nym)
 }
 
 async fn staged(destination: Destination) -> (InitialCreation<Destination>, SameKey, Network) {

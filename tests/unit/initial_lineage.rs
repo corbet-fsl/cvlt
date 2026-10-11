@@ -15,6 +15,8 @@ const ORIGIN: &str = "https://members.garden.example.test";
 const RP: &str = "members.garden.example.test";
 
 struct SameKey {
+    scope: String,
+    origin: String,
     client: cpky::Client<SoftwareAuthenticator>,
     descriptor: ckyh::lineage::PublicCredential,
     evidence: Vec<u8>,
@@ -31,7 +33,7 @@ impl SameKey {
             .into_parts();
         drop(public);
         match custody {
-            cpky::VaultOutcome::Ready(unlock) => PreparedOpen::new(unlock, "garden").unwrap(),
+            cpky::VaultOutcome::Ready(unlock) => PreparedOpen::new(unlock, &self.scope).unwrap(),
             cpky::VaultOutcome::Locked(_) => panic!("original fixture PRF must be available"),
         }
     }
@@ -99,14 +101,22 @@ fn charter(signer: &mut csgn::Signer) -> cchr::Charter {
 }
 
 fn charter_members(signer: &mut csgn::Signer, revoked: &[&str]) -> cchr::Charter {
+    charter_for(signer, "garden", ORIGIN, revoked)
+}
+fn charter_for(
+    signer: &mut csgn::Signer,
+    scope: &str,
+    origin: &str,
+    revoked: &[&str],
+) -> cchr::Charter {
     // Same original signed five-document Charter construction as tests/lineage.
     fn sign(signer: &mut csgn::Signer, kind: csgn::Kind, payload: serde_json::Value) -> Vec<u8> {
         signer
             .sign(kind, &serde_json::to_vec(&payload).unwrap(), 10, 500)
             .unwrap()
     }
-    let schema = json!({"community":"garden","version":1,"public":[],"private":[]});
-    let manifest = json!({"purpose":"cplc.trust.v1","community":"garden","revision":1,
+    let schema = json!({"community":scope,"version":1,"public":[],"private":[]});
+    let manifest = json!({"purpose":"cplc.trust.v1","community":scope,"revision":1,
         "policy_epoch":1,"key_ring":signer.key_ring().to_cbor(),"schema_version":1});
     let mut feed = json!({"revision":1,"policy_epoch":1,"key_ring":signer.key_ring().to_cbor(),
         "manifest":sign(signer,csgn::Kind::SettingsSnapshot,manifest)});
@@ -125,7 +135,7 @@ fn charter_members(signer: &mut csgn::Signer, revoked: &[&str]) -> cchr::Charter
         (
             "communities",
             csgn::Kind::CommunitiesSnapshot,
-            json!(["garden"]),
+            json!([scope]),
         ),
         (
             "revocations",
@@ -136,12 +146,12 @@ fn charter_members(signer: &mut csgn::Signer, revoked: &[&str]) -> cchr::Charter
         feed[name] = json!(sign(
             signer,
             kind,
-            json!({"community":"garden","revision":1,"policy_epoch":1,"content":content})
+            json!({"community":scope,"revision":1,"policy_epoch":1,"content":content})
         ));
     }
     let mut owner = cchr::Charter::new(cchr::Configuration {
-        origin: ORIGIN.into(),
-        community: "garden".into(),
+        origin: origin.into(),
+        community: scope.into(),
         key_ring: signer.key_ring().to_cbor(),
         minimum_revision: 1,
         ring_revision: 0,
@@ -262,11 +272,36 @@ async fn genuine(destination: Destination) -> (InitialCreation<Destination>, Sam
 
 async fn certify_creation(
     created: InitialCreation<Destination>,
-    mut client: cpky::Client<SoftwareAuthenticator>,
+    client: cpky::Client<SoftwareAuthenticator>,
     descriptor: ckyh::lineage::PublicCredential,
     certificate: Vec<u8>,
     renewed_certificate: Vec<u8>,
 ) -> (InitialCreation<Destination>, SameKey) {
+    certify_creation_for(
+        created,
+        client,
+        descriptor,
+        certificate,
+        renewed_certificate,
+        ORIGIN,
+    )
+    .await
+}
+async fn certify_creation_for(
+    created: InitialCreation<Destination>,
+    mut client: cpky::Client<SoftwareAuthenticator>,
+    descriptor: ckyh::lineage::PublicCredential,
+    certificate: Vec<u8>,
+    renewed_certificate: Vec<u8>,
+    origin: &str,
+) -> (InitialCreation<Destination>, SameKey) {
+    let binding = created
+        .receipt()
+        .attested_lineage()
+        .unwrap()
+        .0
+        .binding
+        .clone();
     let challenge = created.receipt().passkey_challenge().unwrap();
     let (public, custody) = client
         .sign_in(serde_json::to_value(descriptor.request(challenge)).unwrap())
@@ -287,15 +322,20 @@ async fn certify_creation(
             .map(|value| value.as_ref().to_vec()),
     };
     ckyh::lineage::verify(&descriptor, &assertion, challenge).unwrap();
-    let mut signer =
-        csgn::Signer::new("garden", csgn::SecretKey::from_seed(&mut [77; 32]), 9, 1000).unwrap();
-    let mut current = charter(&mut signer);
+    let mut signer = csgn::Signer::new(
+        binding.community(),
+        csgn::SecretKey::from_seed(&mut [77; 32]),
+        9,
+        1000,
+    )
+    .unwrap();
+    let mut current = charter_for(&mut signer, binding.community(), origin, &[]);
     let evidence = crate::LineageEvidence::prepare(
         current.current(10).unwrap(),
         created.receipt(),
         &assertion,
         &certificate,
-        "original",
+        binding.member(),
         10,
     )
     .unwrap();
@@ -307,6 +347,8 @@ async fn certify_creation(
     (
         initial,
         SameKey {
+            scope: binding.community().into(),
+            origin: origin.into(),
             client,
             descriptor,
             evidence: evidence_bytes,

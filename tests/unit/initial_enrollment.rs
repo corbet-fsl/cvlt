@@ -6,6 +6,8 @@ struct Enrolling {
     _runtime: tokio::runtime::Runtime,
     _directory: tempfile::TempDir,
     server: ckyh::Passkeys<ckyh::LibsqlStore>,
+    scope: &'static str,
+    member: String,
     client: cpky::Client<SoftwareAuthenticator>,
     pending: Option<ckyh::PendingRegistration>,
     public: Option<ckyh::RegisterPublicKeyCredential>,
@@ -24,6 +26,16 @@ impl Enrolling {
         Self::with_retention_mode(destination, 0).await
     }
     async fn with_retention_mode(destination: Destination, mode: u8) -> Self {
+        Self::in_realm(destination, mode, "garden", ORIGIN, RP, "original".into()).await
+    }
+    async fn in_realm(
+        destination: Destination,
+        mode: u8,
+        scope: &'static str,
+        origin: &'static str,
+        rp: &'static str,
+        member: String,
+    ) -> Self {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -37,11 +49,11 @@ impl Enrolling {
         runtime
             .block_on(db.migrate(&[crlt::Migration::new(1, "passkeys", ckyh::LIBSQL_SCHEMA)]))
             .unwrap();
-        let store = ckyh::LibsqlStore::new(&db, "garden", runtime.handle().clone()).unwrap();
+        let store = ckyh::LibsqlStore::new(&db, scope, runtime.handle().clone()).unwrap();
         let server =
-            ckyh::Passkeys::new(store, "garden", RP, &[ckyh::Url::parse(ORIGIN).unwrap()]).unwrap();
+            ckyh::Passkeys::new(store, scope, rp, &[ckyh::Url::parse(origin).unwrap()]).unwrap();
         let seed = ckmg::EnrollmentSeed::new(
-            ckmg::Binding::new("garden", "original").unwrap(),
+            ckmg::Binding::new(scope, &member).unwrap(),
             &mut ckmg::SystemEntropy,
         )
         .unwrap();
@@ -50,9 +62,9 @@ impl Enrolling {
             .start_initial_registration(ckyh::Uuid::from_u128(17), Some(commitment))
             .unwrap();
         let mut client = cpky::Client::new(
-            cpky::Context::new(ORIGIN, RP).unwrap(),
+            cpky::Context::new(origin, rp).unwrap(),
             SoftwareAuthenticator::new(
-                ORIGIN,
+                origin,
                 TestConfiguration {
                     user_verified: true,
                     prf: true,
@@ -69,10 +81,10 @@ impl Enrolling {
         let original_id = public.credential_id().unwrap();
         let finish_continuation = serde_json::to_vec(&public).unwrap();
         let public = serde_json::from_value(public.into_json()).unwrap();
-        let opening = PreparedOpen::new(custody, "garden").unwrap();
+        let opening = PreparedOpen::new(custody, scope).unwrap();
         let device = opening.device().unwrap();
         let inspector = opening.inspector().unwrap();
-        let cipher = ckmg::passkey::store_cipher(&opening.prf, "garden").unwrap();
+        let cipher = ckmg::passkey::store_cipher(&opening.prf, scope).unwrap();
         let location = opening.locator;
         destination.mode.set(mode);
         let mut clock = TestClock(10);
@@ -103,7 +115,7 @@ impl Enrolling {
             assert_eq!(retained.finish_continuation().unwrap(), finish_continuation);
         }
         let candidate_digest = if destination.memory.read().await.unwrap().is_some() {
-            let actual = cwst::Store::open(destination.memory.clone(), &cipher, "garden")
+            let actual = cwst::Store::open(destination.memory.clone(), &cipher, scope)
                 .await
                 .unwrap();
             assert_eq!(
@@ -121,6 +133,8 @@ impl Enrolling {
             _runtime: runtime,
             _directory: directory,
             server,
+            scope,
+            member,
             client,
             pending: Some(pending),
             public: Some(public),
@@ -160,7 +174,7 @@ impl Enrolling {
             .into_parts();
         let public = serde_json::from_value(public.into_json()).unwrap();
         let authentication = self.server.finish_authentication(pending, &public).unwrap();
-        self.opening = Some(PreparedOpen::new(custody, "garden").unwrap());
+        self.opening = Some(PreparedOpen::new(custody, self.scope).unwrap());
         authentication
     }
     async fn reopen(&mut self, destination: Destination) -> crate::UnenrolledInitial<Destination> {
@@ -176,6 +190,7 @@ impl Enrolling {
 
 struct Activation<'a> {
     server: &'a ckyh::Passkeys<ckyh::LibsqlStore>,
+    binding: ckmg::Binding,
     auth: ckyh::Authentication,
     credential: Vec<u8>,
     device: ckmg::PublicKey,
@@ -194,7 +209,9 @@ impl Activation<'_> {
             .initial_creation(&self.auth)
             .map_err(|_| ckmg::Error::Unauthorized)?;
         if self.deny
-            || r.binding != &ckmg::Binding::new("garden", "original")?
+            || r.binding != &self.binding
+            || (self.binding.community() == "wallet"
+                && self.binding.member() != self.auth.member().to_string())
             || r.authority_reference != self.credential.as_slice()
             || r.authority_reference != self.auth.credential_id().as_ref()
             || r.device != self.device
@@ -240,6 +257,7 @@ fn activation<'a>(
 ) -> Activation<'a> {
     Activation {
         server: &f.server,
+        binding: ckmg::Binding::new(f.scope, &f.member).unwrap(),
         auth,
         credential: f.original_id.clone(),
         device: f.device,
@@ -500,3 +518,7 @@ shared!(
 
 #[path = "initial_ack_provenance.rs"]
 mod acknowledged_provenance_tests;
+
+#[cfg(feature = "wallet")]
+#[path = "initial_wallet_ack.rs"]
+mod wallet_ack_tests;
