@@ -170,6 +170,61 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
         Ok(())
     }
 
+    /// Prove the frozen candidate with the bounded original native prover, only
+    /// for this exact receipt-installed account capsule. The candidate is consumed
+    /// (refusal or cancellation invalidates it); original Keys authority is checked
+    /// before and after the computation. The proof grants no enrollment, issuer
+    /// acceptance or custody release; the caller separately refreshes remote
+    /// admission and supplies the unchanged public context.
+    #[cfg(all(feature = "wallet-native-prover", not(target_arch = "wasm32")))]
+    pub async fn prove_community_genesis(
+        &mut self,
+        candidate: cwlt::account_owner::AccountGenesis,
+        context: &ckmg::wallet_engine::account::GenesisContext,
+        prover: &ckmg::wallet_engine::native_prover::NativeProver,
+        mut clock: impl FnMut() -> std::result::Result<u64, ckmg::wallet_engine::Error>,
+    ) -> Result<cwlt::account_owner::AccountGenesisProof, WalletRestoreError> {
+        let storage = self.storage.clone();
+        let store = storage.lock().await;
+        let binding = self
+            .keys
+            .lineage()
+            .await
+            .map_err(WalletRestoreError::Keys)?
+            .binding;
+        if binding.community() == "wallet"
+            || context.community_id != binding.community()
+            || !store.is_scope(binding.community())
+        {
+            candidate.invalidate();
+            return Err(WalletRestoreError::Scope);
+        }
+        let engine = self
+            .keys
+            .wallet_engine()
+            .await
+            .map_err(WalletRestoreError::Keys)?;
+        let proof = candidate
+            .prove(&self.wallet.account, &engine, &store, prover, &mut clock)
+            .map_err(WalletRestoreError::Account)?;
+        // The final original Keys await follows all computation.
+        let after = self.keys.lineage().await;
+        let fresh = self.keys.wallet_engine().await;
+        let (Ok(after), Ok(fresh)) = (after, fresh) else {
+            proof.invalidate();
+            return Err(WalletRestoreError::Scope);
+        };
+        if after.binding != binding {
+            proof.invalidate();
+            return Err(WalletRestoreError::Scope);
+        }
+        let now = clock().map_err(|e| WalletRestoreError::Account(e.into()))?;
+        proof
+            .check_current(&self.wallet.account, &fresh, &store, context, now)
+            .map_err(WalletRestoreError::Account)?;
+        Ok(proof)
+    }
+
     /// Public enrollment coordinate and original secret commitment after fresh
     /// Keys authority and exact sealed-record/Store receipt checks. Neither this
     /// data nor successful restoration is account admission or a delegation.
