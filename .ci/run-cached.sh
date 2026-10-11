@@ -6,8 +6,8 @@ exec 2>&1
 : "${CI_COMMIT_SHA:?Missing verified source revision}"
 : "${CI_REPOSITORY_URL:?Missing canonical repository identity}"
 : "${CHECKS:?Missing declared check selection}"
-if [ "$CHECKS" != "verify" ] && [ "$CHECKS" != "resolve-dependencies" ]; then
-  echo "CHECKS must be verify or resolve-dependencies, got: $CHECKS" >&2
+if [ "$CHECKS" != "verify" ] && [ "$CHECKS" != "resolve-dependencies" ] && [ "$CHECKS" != "native" ]; then
+  echo "CHECKS must be verify, resolve-dependencies or native, got: $CHECKS" >&2
   exit 2
 fi
 cache_root=${CI_CACHE_ROOT:-${CARGO_HOME:-}}
@@ -92,7 +92,7 @@ chromedriver --version
 chromium --version
 rustup run nightly rustc -vV
 rustup run nightly cargo llvm-cov --version
-if [ "$CHECKS" = "resolve-dependencies" ]; then
+if [ "$CHECKS" = "resolve-dependencies" ] || [ "$CHECKS" = "native" ]; then
   exec "$CCID_BIN" check --repo "$PWD" --check "$CHECKS"
 fi
 "$CCID_BIN" cached --repo "$PWD" --check verify

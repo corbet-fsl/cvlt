@@ -8,6 +8,12 @@ commands = [["bash", ".ci/verify.sh"]]
 cache_tools = [["rustc", "-vV"], ["cargo", "--version"], ["rustup", "run", "nightly", "rustc", "-vV"], ["rustup", "run", "nightly", "cargo", "llvm-cov", "--version"], ["python3", "--version"], ["python3", "-c", "import selenium; print(selenium.__version__)"], ["node", "--version"], ["wasm-pack", "--version"], ["clang", "--version"], ["chromedriver", "--version"], ["chromium", "--version"]]
 cache_outputs = ["coverage.json", "coverage.lcov", "coverage.txt", "wasm-coverage.json", "wasm-coverage.lcov", "wasm-coverage.txt"]
 
+# Original native owner gates; the full cached platform/coverage check stays intact.
+[checks.native]
+kind = "commands"
+commands = [["bash", ".ci/native.sh"]]
+cache_tools = [["rustc", "-vV"], ["cargo", "--version"], ["python3", "--version"], ["node", "--version"]]
+
 [checks.resolve-dependencies]
 kind = "commands"
 commands = [["bash", ".ci/resolve-dependencies.sh"]]
@@ -20,6 +26,12 @@ tool_revision = "53c129c2efa3b9279d2ecbc237d15acdfb656d8c"
 [jobs.verify]
 scheduler = "crow"
 checks = ["verify"]
+workflow = "repository-jobs"
+command = ["bash", ".ci/run-cached.sh"]
+
+[jobs.native]
+scheduler = "crow"
+checks = ["native"]
 workflow = "repository-jobs"
 command = ["bash", ".ci/run-cached.sh"]
 
