@@ -10,9 +10,9 @@ use zeroize::Zeroizing;
 /// await before any later completion. No constructor, clone, serialization or
 /// acknowledgment is exposed.
 pub struct InitialLineageRead<B: Backend> {
-    creation: InitialCreation<B>,
-    evidence: LineageEvidence,
-    checked_at: u64,
+    pub(super) creation: InitialCreation<B>,
+    pub(super) evidence: LineageEvidence,
+    pub(super) checked_at: u64,
 }
 impl<B: Backend> InitialLineageRead<B> {
     /// Original public evidence, requiring fresh current-Charter verification.

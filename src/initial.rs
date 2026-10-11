@@ -9,6 +9,8 @@ mod publication;
 pub use publication::InitialPublication;
 mod lineage;
 pub use lineage::InitialLineageRead;
+mod acknowledgment;
+pub use acknowledgment::InitialAcknowledgment;
 
 const OWNER: &str = "initial-creation";
 const INNER: &[u8] = b"common-root-store";
@@ -18,6 +20,8 @@ const INTENT: &[u8] = b"prepared-intent";
 const DESCRIPTOR: &[u8] = b"genesis-descriptor";
 const VALUE: &[u8] = b"genesis-value";
 const QUEUE: &[u8] = b"genesis-client-state";
+const ACKNOWLEDGED_INNER: &[u8] = b"acknowledged-common-root-store";
+const ACKNOWLEDGED_KEYS: &[u8] = b"acknowledged-keys";
 
 /// Coarse failure; absence never authorizes another Create.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,6 +61,9 @@ pub enum InitialPhase {
     /// A genuine authenticated conflicting observation has committed. Publication
     /// from this operation is terminally refused; no retry may erase that floor.
     Conflicted,
+    /// Original Keys acknowledgment and evidence are durably retained together.
+    /// Recovery publication and outer retirement remain required; no Vault escapes.
+    Acknowledged,
 }
 
 struct BackendRef<B>(Rc<B>);
@@ -345,6 +352,17 @@ impl<B: Backend> InitialCreation<B> {
             .read(OWNER, QUEUE)
             .map_err(InitialError::Storage)?;
         let version = self.store.version().map_err(InitialError::Storage)?;
+        let acknowledged_inner = self
+            .store
+            .read(OWNER, ACKNOWLEDGED_INNER)
+            .map_err(InitialError::Storage)?;
+        let acknowledged_keys = self
+            .store
+            .read(OWNER, ACKNOWLEDGED_KEYS)
+            .map_err(InitialError::Storage)?;
+        if version != 5 && (acknowledged_inner.is_some() || acknowledged_keys.is_some()) {
+            return Err(InitialError::Invalid);
+        }
         let expected_operation = if version == 1 {
             initial_operation(&self.store)?
         } else {
@@ -378,10 +396,19 @@ impl<B: Backend> InitialCreation<B> {
                 self.staged_state()?;
                 Ok(InitialPhase::Staged)
             }
-            (5, Some(bytes), Some(_), Some(_), Some(_)) => {
+            (5, Some(bytes), Some(_), Some(_), Some(_))
+                if acknowledged_inner.is_none() && acknowledged_keys.is_none() =>
+            {
                 decode_intent(bytes)?;
                 self.conflicted_state()?;
                 Ok(InitialPhase::Conflicted)
+            }
+            (5, Some(bytes), Some(_), Some(_), Some(_))
+                if acknowledged_inner.is_some() && acknowledged_keys.is_some() =>
+            {
+                decode_intent(bytes)?;
+                self.acknowledged_state()?;
+                Ok(InitialPhase::Acknowledged)
             }
             _ => Err(InitialError::Invalid),
         }

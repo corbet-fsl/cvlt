@@ -34,6 +34,7 @@ enum Reader<'attempt> {
     Passkey(ckmg::passkey::PasskeyRecordReader<'attempt>),
     Provisional(ckmg::ProvisionalLineage<'attempt>),
     Member(ckmg::LineageReadCustody),
+    Initial(ckmg::InitialLineageReader),
     Checkpoint(ckmg::CheckpointRecordCustody<'attempt>),
 }
 impl Reader<'_> {
@@ -42,6 +43,7 @@ impl Reader<'_> {
             Self::Passkey(reader) => reader.owner(),
             Self::Provisional(reader) => reader.owner(),
             Self::Member(reader) => reader.owner(),
+            Self::Initial(reader) => reader.owner(),
             Self::Checkpoint(reader) => reader.public_key(),
         }
     }
@@ -54,6 +56,7 @@ impl Reader<'_> {
             Self::Passkey(reader) => reader.with_cipher(|cipher| cipher.crypt(nonce, ciphertext)),
             Self::Provisional(reader) => reader.open(nonce, ciphertext),
             Self::Member(reader) => reader.open(nonce, ciphertext),
+            Self::Initial(reader) => reader.open(nonce, ciphertext),
             Self::Checkpoint(reader) => {
                 reader.with_record(|_, cipher| cipher.crypt(nonce, ciphertext))
             }
@@ -128,6 +131,15 @@ impl<'unlock, N: Network> TorReadRecord<'unlock, N> {
     }
 }
 impl<N: Network> TorReadRecord<'static, N> {
+    /// Fixed initial lineage read custody, retained only by the completion
+    /// attempt's actual member checker. Reads grant no Keys or acknowledgment.
+    pub async fn initial_lineage(
+        network: N,
+        reader: ckmg::InitialLineageReader,
+    ) -> Result<Self, cdht::Error> {
+        Self::open_reader(network, Reader::Initial(reader)).await
+    }
+
     /// Member-owned read custody after full recovery authorization. Retain this
     /// in the same member owner and drop it on lock; every Use still reads anew.
     pub async fn member_lineage(

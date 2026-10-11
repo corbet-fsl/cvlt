@@ -227,6 +227,22 @@ impl LineageEvidence {
         bound(receipt.len(), assertion.len(), self.certificate.len())?;
         Ok((receipt, assertion))
     }
+
+    pub(crate) fn retained_mutations(&self) -> Result<Vec<crate::Mutation>, EvidenceError> {
+        let (receipt, assertion) = self.encoded()?;
+        Ok([
+            (RECEIPT, receipt),
+            (ASSERTION, assertion),
+            (CERTIFICATE, self.certificate.clone()),
+        ]
+        .into_iter()
+        .map(|(owner, value)| crate::Mutation {
+            owner: owner.into(),
+            key: self.operation().to_vec(),
+            value: Some(value),
+        })
+        .collect())
+    }
 }
 
 fn bound(receipt: usize, assertion: usize, certificate: usize) -> Result<(), EvidenceError> {

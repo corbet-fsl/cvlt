@@ -16,8 +16,8 @@ pub use compound::{
 use cwst::backend::Backend;
 pub use existing::{OpenError, Owners, PreparedOpen, PreparedRecovery, RecoveryCandidate};
 pub use initial::{
-    InitialCreation, InitialError, InitialLineageRead, InitialPhase, InitialPublication,
-    RetainedGenesis,
+    InitialAcknowledgment, InitialCreation, InitialError, InitialLineageRead, InitialPhase,
+    InitialPublication, RetainedGenesis,
 };
 pub use lineage::{
     LineageError, LineageRead, LineageRecords, VerifiedLineageObservation, verify_lineage,

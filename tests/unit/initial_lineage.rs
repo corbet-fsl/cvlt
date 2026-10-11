@@ -6,6 +6,9 @@ use cdht::Backend as _;
 use cpky::software::{SoftwareAuthenticator, TestConfiguration};
 use serde_json::json;
 
+#[path = "initial_acknowledgment.rs"]
+mod acknowledgment_tests;
+
 const ORIGIN: &str = "https://members.garden.example.test";
 const RP: &str = "members.garden.example.test";
 
@@ -13,6 +16,7 @@ struct SameKey {
     client: cpky::Client<SoftwareAuthenticator>,
     descriptor: ckyh::lineage::PublicCredential,
     evidence: Vec<u8>,
+    retained_checkpoint: Vec<u8>,
 }
 impl SameKey {
     async fn opening(&mut self) -> PreparedOpen {
@@ -86,6 +90,10 @@ impl Authority for Completion {
 }
 
 fn charter(signer: &mut csgn::Signer) -> cchr::Charter {
+    charter_members(signer, &[])
+}
+
+fn charter_members(signer: &mut csgn::Signer, revoked: &[&str]) -> cchr::Charter {
     // Same original signed five-document Charter construction as tests/lineage.
     fn sign(signer: &mut csgn::Signer, kind: csgn::Kind, payload: serde_json::Value) -> Vec<u8> {
         signer
@@ -117,7 +125,7 @@ fn charter(signer: &mut csgn::Signer) -> cchr::Charter {
         (
             "revocations",
             csgn::Kind::RevocationListSnapshot,
-            json!({"members":[],"devices":[],"passkeys":[]}),
+            json!({"members":revoked,"devices":[],"passkeys":[]}),
         ),
     ] {
         feed[name] = json!(sign(
@@ -278,12 +286,14 @@ async fn genuine(destination: Destination) -> (InitialCreation<Destination>, Sam
         .retain(&mut TestClock(10), &mut completion)
         .await
         .unwrap();
+    let retained_checkpoint = retained.store.sealed_checkpoint().unwrap().to_vec();
     (
         retained,
         SameKey {
             client,
             descriptor,
             evidence: evidence_bytes,
+            retained_checkpoint,
         },
     )
 }

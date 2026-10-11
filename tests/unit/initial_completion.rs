@@ -53,6 +53,9 @@ impl Backend for Destination {
             futures::future::pending::<()>().await;
         }
         self.memory.compare_exchange(expected, next).await?;
+        if self.mode.get() == 6 {
+            let _held = self.read_gate.lock().await;
+        }
         if self.mode.get() == 2 {
             futures::future::pending::<()>().await;
         }
