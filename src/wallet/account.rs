@@ -59,6 +59,117 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
 impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
     Vault<B, C, E, A, R, CommunityAccountCustody>
 {
+    /// Prepare opaque private genesis for the receipt-installed account capsule.
+    /// Context and observation are data supplied by the independently current
+    /// admission owner. This grants no proof, account acceptance or installation.
+    pub async fn prepare_community_genesis(
+        &mut self,
+        context: ckmg::wallet_engine::account::GenesisContext,
+        now: u64,
+    ) -> Result<cwlt::account_owner::AccountGenesis, WalletRestoreError> {
+        let storage = self.storage.clone();
+        let store = storage.lock().await;
+        let binding = self
+            .keys
+            .lineage()
+            .await
+            .map_err(WalletRestoreError::Keys)?
+            .binding;
+        if binding.community() == "wallet"
+            || context.community_id != binding.community()
+            || !store.is_scope(binding.community())
+        {
+            return Err(WalletRestoreError::Scope);
+        }
+        let engine = self
+            .keys
+            .wallet_engine()
+            .await
+            .map_err(WalletRestoreError::Keys)?;
+        let candidate = self
+            .wallet
+            .account
+            .prepare_genesis(engine, &store, context.clone(), now)
+            .map_err(WalletRestoreError::Account)?;
+        // The final original Keys await must precede any candidate return.
+        if self
+            .keys
+            .lineage()
+            .await
+            .map_err(WalletRestoreError::Keys)?
+            .binding
+            != binding
+        {
+            return Err(WalletRestoreError::Scope);
+        }
+        let fresh = self
+            .keys
+            .wallet_engine()
+            .await
+            .map_err(WalletRestoreError::Keys)?;
+        candidate
+            .check_current(&self.wallet.account, &fresh, &store, &context, now)
+            .map_err(WalletRestoreError::Account)?;
+        Ok(candidate)
+    }
+
+    /// Reauthorize original Keys and recheck the frozen candidate's durable
+    /// capsule. The caller separately refreshes genuine remote admission and
+    /// supplies its exact unchanged public context; this does not fetch it.
+    pub async fn check_community_genesis(
+        &mut self,
+        candidate: &cwlt::account_owner::AccountGenesis,
+        context: &ckmg::wallet_engine::account::GenesisContext,
+        now: u64,
+    ) -> Result<(), WalletRestoreError> {
+        let mut attempt = GenesisCheck {
+            candidate,
+            completed: false,
+        };
+        let storage = self.storage.clone();
+        let store = storage.lock().await;
+        let binding = self
+            .keys
+            .lineage()
+            .await
+            .map_err(WalletRestoreError::Keys)?
+            .binding;
+        if binding.community() == "wallet"
+            || context.community_id != binding.community()
+            || !store.is_scope(binding.community())
+        {
+            return Err(WalletRestoreError::Scope);
+        }
+        let engine = self
+            .keys
+            .wallet_engine()
+            .await
+            .map_err(WalletRestoreError::Keys)?;
+        candidate
+            .check_current(&self.wallet.account, &engine, &store, context, now)
+            .map_err(WalletRestoreError::Account)?;
+        if self
+            .keys
+            .lineage()
+            .await
+            .map_err(WalletRestoreError::Keys)?
+            .binding
+            != binding
+        {
+            return Err(WalletRestoreError::Scope);
+        }
+        let fresh = self
+            .keys
+            .wallet_engine()
+            .await
+            .map_err(WalletRestoreError::Keys)?;
+        candidate
+            .check_current(&self.wallet.account, &fresh, &store, context, now)
+            .map_err(WalletRestoreError::Account)?;
+        attempt.completed = true;
+        Ok(())
+    }
+
     /// Public enrollment coordinate and original secret commitment after fresh
     /// Keys authority and exact sealed-record/Store receipt checks. Neither this
     /// data nor successful restoration is account admission or a delegation.
@@ -97,6 +208,18 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
             return Err(WalletRestoreError::Scope);
         }
         Ok(public)
+    }
+}
+
+struct GenesisCheck<'owner> {
+    candidate: &'owner cwlt::account_owner::AccountGenesis,
+    completed: bool,
+}
+impl Drop for GenesisCheck<'_> {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.candidate.invalidate();
+        }
     }
 }
 

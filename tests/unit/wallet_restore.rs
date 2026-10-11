@@ -14,6 +14,8 @@ const SCOPE: &str = "wallet-test";
 const MEMBER: &str = "fixture-member";
 const NOW: u64 = 1_800_000_000;
 
+#[path = "account_genesis.rs"]
+mod account_genesis_tests;
 #[path = "account_restore.rs"]
 mod account_restore_tests;
 
