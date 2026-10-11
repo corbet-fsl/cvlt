@@ -148,6 +148,9 @@ impl<B: Backend> UnenrolledInitial<B> {
             ACKNOWLEDGED_INNER,
             ACKNOWLEDGED_KEYS,
             RECOVERY,
+            RECOVERY_PROGRESS,
+            RETIREMENT_SELECTION,
+            CARRIED_INNER,
         ] {
             if self
                 .store

@@ -88,7 +88,7 @@ impl<B: Backend> InitialCreation<B> {
     }
 
     pub(super) fn staged_state(&self) -> Result<cdht::ClientState, InitialError> {
-        if !matches!(logical_version(&self.store)?, 4..=6) {
+        if logical_version(&self.store)? < 4 {
             return Err(InitialError::Invalid);
         }
         let bytes = required(&self.store, QUEUE)?;

@@ -2,32 +2,12 @@
 //! Local node placement below checks interoperability, not production flush.
 use super::*;
 
-struct RecoveryMember(Member);
+#[path = "initial_recovery_transport.rs"]
+mod transport_tests;
+
+struct RecoveryMember(Member, bool);
 impl RecoveryMember {
-    fn exact(&self, r: &ckmg::CompletionAuthorization<'_>) -> Result<(), ckmg::Error> {
-        let original = &self.0.original;
-        if r.receipt != &original.receipt
-            || r.authority_reference != self.0.credential.as_slice()
-            || r.location != &original.location
-            || r.sealed_digest != &original.keys
-            || r.intent.outer_generation != 5
-            || r.intent.outer_digest != original.outer
-            || r.intent.inner_version != 1
-            || r.intent.inner_operation != [8; 32]
-            || r.intent.inner_digest != original.inner
-            || r.intent.nonce != [71; 24]
-            || r.intent.packed_evidence != self.0.evidence.packed().unwrap().as_slice()
-            || r.intent.prepared_at != 10
-            || r.intent.expires != 30
-            || !(10..30).contains(&r.now)
-        {
-            return Err(ckmg::Error::Unauthorized);
-        }
-        self.0.verify(r.now)
-    }
-}
-impl Authority for RecoveryMember {
-    async fn check(&mut self, r: ckmg::Authorization<'_>) -> Result<(), ckmg::Error> {
+    fn exact_use(&self, r: &ckmg::Authorization<'_>) -> Result<(), ckmg::Error> {
         let (lineage, author) = self.0.original.receipt.attested_lineage()?;
         if r.action != ckmg::Action::Use
             || r.binding != &lineage.binding
@@ -38,11 +18,17 @@ impl Authority for RecoveryMember {
             || r.statement != Some(lineage.digest()?)
             || r.signing.is_some()
             || r.evidence != self.0.evidence.to_bytes().unwrap().as_slice()
-            || !(10..30).contains(&r.now)
+            || !(10..70).contains(&r.now)
         {
             return Err(ckmg::Error::Unauthorized);
         }
-        self.0.verify(r.now)?;
+        self.0.verify(r.now)
+    }
+}
+impl Authority for RecoveryMember {
+    async fn check(&mut self, r: ckmg::Authorization<'_>) -> Result<(), ckmg::Error> {
+        self.1 = false;
+        self.exact_use(&r)?;
         let read = self
             .0
             .records
@@ -57,33 +43,27 @@ impl Authority for RecoveryMember {
             return Err(ckmg::Error::Unauthorized);
         }
         let completed = self.0.time.get();
-        if completed < r.now || completed >= 30 {
+        if completed < r.now || completed >= 70 {
             return Err(ckmg::Error::Unauthorized);
         }
         self.0.verify(completed)?;
         self.0.uses.set(self.0.uses.get() + 1);
+        self.1 = true;
         Ok(())
     }
-    async fn check_completion(
-        &mut self,
-        r: ckmg::CompletionAuthorization<'_>,
-    ) -> Result<u64, ckmg::Error> {
-        if self.0.completion_started {
+    // Dedicated pending creation ports deliberately keep their original default
+    // denial. Completed recovery uses only the exact normal checkpoint request.
+    fn check_checkpoint_current(&mut self, r: ckmg::Authorization<'_>) -> Result<u64, ckmg::Error> {
+        if !self.1 {
             return Err(ckmg::Error::Unauthorized);
         }
-        self.exact(&r)?;
-        self.0.completion_started = true;
-        Ok(self.0.time.get())
-    }
-    fn check_completion_current(
-        &mut self,
-        r: ckmg::CompletionAuthorization<'_>,
-    ) -> Result<u64, ckmg::Error> {
-        if !self.0.completion_started {
+        self.exact_use(&r)?;
+        let completed = self.0.time.get();
+        if completed < r.now || completed >= 70 {
             return Err(ckmg::Error::Unauthorized);
         }
-        self.exact(&r)?;
-        Ok(self.0.time.get())
+        self.0.verify(completed)?;
+        Ok(completed)
     }
 }
 
@@ -104,7 +84,7 @@ async fn acknowledged(
         .unwrap();
     member.original = ExactCompletion::new(&initial);
     member.completion_started = false;
-    (initial, key, network, RecoveryMember(member))
+    (initial, key, network, RecoveryMember(member, false))
 }
 
 async fn fixture_place_outputs(initial: &InitialCreation<Destination>, network: &Network) {
@@ -346,7 +326,7 @@ shared!(
             ));
             assert!(pending.as_mut().now_or_never().is_none());
             match case {
-                0 | 4 => time.set(30),
+                0 | 4 => time.set(70),
                 1 => time.set(9),
                 2 => {
                     let mut signer = csgn::Signer::new(
@@ -446,7 +426,7 @@ shared!(
         assert_eq!(initial.phase().unwrap(), InitialPhase::Acknowledged);
         original.original = ExactCompletion::new(&initial);
         original.completion_started = false;
-        let mut member = RecoveryMember(original);
+        let mut member = RecoveryMember(original, false);
         let uses = member.0.uses.get();
         let old = counterfeit.memory.read().await.unwrap();
         assert!(matches!(
@@ -460,7 +440,7 @@ shared!(
                 .await,
             Err(InitialError::Storage(_))
         ));
-        assert_eq!(member.0.uses.get(), uses);
+        assert_eq!(member.0.uses.get(), uses + 1);
         assert_eq!(counterfeit.memory.read().await.unwrap(), old);
         assert_eq!(network.sets.get(), 0);
     }
@@ -496,6 +476,80 @@ shared!(
             assert_eq!(member.0.uses.get(), uses);
             assert_eq!(destination.memory.read().await.unwrap(), old);
             assert_eq!(destination.writes.get(), 5);
+            assert_eq!(network.sets.get(), 0);
+        }
+    }
+);
+
+shared!(
+    completed_acknowledgment_uses_fresh_normal_authority_before_and_after_old_intent_expiry,
+    {
+        for now in [20, 40] {
+            let destination = Destination::new();
+            let (initial, mut key, network, mut previous) = acknowledged(destination.clone()).await;
+            drop(initial);
+            let initial = key
+                .opening()
+                .await
+                .reopen_initial(destination.clone())
+                .await
+                .unwrap();
+            // Rebuild the strict owner from the authenticated reopened state.
+            // Transfer only fixed read custody; no earlier Use result survives.
+            let mut fresh = Member::new(&initial, &key);
+            fresh.records = previous.0.records.take();
+            drop(previous);
+            let mut member = RecoveryMember(fresh, false);
+            member.0.time.set(now);
+            let old = decode_intent(required(&initial.store, INTENT).unwrap()).unwrap();
+            assert_eq!(old.expires, 30);
+            let pending = initial
+                .opening
+                .inspector()
+                .unwrap()
+                .pending_creation(required(&initial.store, KEYS).unwrap())
+                .unwrap();
+            let pending_intent = ckmg::CompletionIntent {
+                outer_generation: initial.store.version().unwrap(),
+                outer_digest: *blake3::hash(initial.store.sealed_checkpoint().unwrap()).as_bytes(),
+                inner_version: 1,
+                inner_operation: initial_operation(&initial.store).unwrap(),
+                inner_digest: *blake3::hash(required(&initial.store, INNER).unwrap()).as_bytes(),
+                nonce: old.nonce,
+                packed_evidence: old.packed_evidence.clone(),
+                prepared_at: old.prepared_at,
+                expires: old.expires,
+            };
+            // This real pending checkpoint remains a pending attempt: normal Use
+            // cannot satisfy its dedicated completion port, or renew its expiry.
+            let refused = pending
+                .authorize_completion(pending_intent, &mut TestClock(now), &mut member)
+                .await;
+            assert!(matches!(
+                (now, refused),
+                (20, Err(ckmg::Error::Unauthorized)) | (40, Err(ckmg::Error::Expired))
+            ));
+            let gets_before = network.gets.get();
+            let initial = initial
+                .stage_recovery(
+                    network.clone(),
+                    &mut TestClock(now),
+                    &mut ckmg::SystemEntropy,
+                    &mut member,
+                )
+                .await
+                .unwrap();
+            assert_eq!(initial.phase().unwrap(), InitialPhase::RecoveryStaged);
+            assert_eq!(
+                decode_intent(required(&initial.store, INTENT).unwrap())
+                    .unwrap()
+                    .expires,
+                30
+            );
+            assert_eq!(initial.store.version().unwrap(), 6);
+            assert_eq!(destination.writes.get(), 6);
+            assert_eq!(member.0.uses.get(), 1);
+            assert_eq!(network.gets.get(), gets_before + 3);
             assert_eq!(network.sets.get(), 0);
         }
     }

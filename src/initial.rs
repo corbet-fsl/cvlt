@@ -1,5 +1,6 @@
 //! Completion of an original creation from the original encrypted Store format.
 use crate::{Batch, OpenError, Owners, PreparedLineageEvidence, PreparedOpen, Records};
+mod provenance;
 use ckmg::{Authority, Clock, Entropy};
 use cwst::backend::Backend;
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,11 @@ mod acknowledgment;
 pub use acknowledgment::InitialAcknowledgment;
 mod enrollment;
 pub use enrollment::UnenrolledInitial;
+mod acknowledged;
 mod recovery_publication;
+mod recovery_retirement;
+mod recovery_transport;
+pub use recovery_retirement::RetiredInitial;
 
 const OWNER: &str = "initial-creation";
 const INNER: &[u8] = b"common-root-store";
@@ -28,6 +33,9 @@ const ACKNOWLEDGED_KEYS: &[u8] = b"acknowledged-keys";
 const ENROLLMENT: &[u8] = b"unenrolled-candidate";
 const ENROLLMENT_FINISH: &[u8] = b"unenrolled-finish";
 const RECOVERY: &[u8] = b"recovery-publication";
+const RECOVERY_PROGRESS: &[u8] = b"recovery-progress";
+const RETIREMENT_SELECTION: &[u8] = b"retirement-selection";
+const CARRIED_INNER: &[u8] = b"selected-common-root-store";
 
 /// Coarse failure; absence never authorizes another Create.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,6 +81,15 @@ pub enum InitialPhase {
     /// Original recovery outputs and their complete client queue are durable.
     /// Forced recovery reads and outer retirement remain required.
     RecoveryStaged,
+    /// One or more original transport outcomes and floors are durable. This is
+    /// not a successful forced recovery read or usable Vault.
+    RecoveryProgress,
+    /// A genuine signed conflict fences further original recovery publication.
+    /// Fresh original recovery may still select a valid winning checkpoint.
+    RecoveryDiverged,
+    /// Exact authenticated winner read observations have committed before the
+    /// separate retirement CAS. Further publication is permanently refused.
+    RetirementSelected,
 }
 
 struct BackendRef<B>(Rc<B>);
@@ -361,7 +378,7 @@ impl<B: Backend> InitialCreation<B> {
             .read(OWNER, QUEUE)
             .map_err(InitialError::Storage)?;
         let version = logical_version(&self.store)?;
-        if version != 6
+        if version < 6
             && self
                 .store
                 .read(OWNER, RECOVERY)
@@ -392,8 +409,15 @@ impl<B: Backend> InitialCreation<B> {
             .store
             .read(OWNER, ACKNOWLEDGED_KEYS)
             .map_err(InitialError::Storage)?;
-        if !matches!(version, 5 | 6)
-            && (acknowledged_inner.is_some() || acknowledged_keys.is_some())
+        if version < 5 && (acknowledged_inner.is_some() || acknowledged_keys.is_some()) {
+            return Err(InitialError::Invalid);
+        }
+        if version <= 6
+            && self
+                .store
+                .read(OWNER, RECOVERY_PROGRESS)
+                .map_err(InitialError::Storage)?
+                .is_some()
         {
             return Err(InitialError::Invalid);
         }
@@ -411,6 +435,20 @@ impl<B: Backend> InitialCreation<B> {
                 .load_pending()
                 .map_err(InitialError::Storage)?
                 .is_empty()
+        {
+            return Err(InitialError::Invalid);
+        }
+        let selected = self
+            .store
+            .read(OWNER, RETIREMENT_SELECTION)
+            .map_err(InitialError::Storage)?
+            .is_some();
+        if selected
+            != self
+                .store
+                .read(OWNER, CARRIED_INNER)
+                .map_err(InitialError::Storage)?
+                .is_some()
         {
             return Err(InitialError::Invalid);
         }
@@ -442,7 +480,11 @@ impl<B: Backend> InitialCreation<B> {
             {
                 decode_intent(bytes)?;
                 self.acknowledged_state()?;
-                Ok(InitialPhase::Acknowledged)
+                Ok(if selected {
+                    InitialPhase::RetirementSelected
+                } else {
+                    InitialPhase::Acknowledged
+                })
             }
             (6, Some(bytes), Some(_), Some(_), Some(_))
                 if acknowledged_inner.is_some() && acknowledged_keys.is_some() =>
@@ -450,7 +492,26 @@ impl<B: Backend> InitialCreation<B> {
                 decode_intent(bytes)?;
                 self.acknowledged_state()?;
                 self.recovery_state()?;
-                Ok(InitialPhase::RecoveryStaged)
+                Ok(if selected {
+                    InitialPhase::RetirementSelected
+                } else {
+                    InitialPhase::RecoveryStaged
+                })
+            }
+            (7.., Some(bytes), Some(_), Some(_), Some(_))
+                if acknowledged_inner.is_some() && acknowledged_keys.is_some() =>
+            {
+                decode_intent(bytes)?;
+                self.acknowledged_state()?;
+                self.recovery_state()?;
+                let (_, conflict, _) = self.recovery_progress()?;
+                Ok(if selected {
+                    InitialPhase::RetirementSelected
+                } else if conflict {
+                    InitialPhase::RecoveryDiverged
+                } else {
+                    InitialPhase::RecoveryProgress
+                })
             }
             _ => Err(InitialError::Invalid),
         }
@@ -519,7 +580,7 @@ impl<B: Backend> InitialCreation<B> {
     /// Read only the exact committed original outputs. Reopening never signs
     /// anew or manufactures another nonce, deadline, receipt or creation root.
     pub fn retained(&self) -> Result<RetainedGenesis, InitialError> {
-        if !matches!(logical_version(&self.store)?, 3..=6) {
+        if logical_version(&self.store)? < 3 {
             return Err(InitialError::Invalid);
         }
         let descriptor =
@@ -581,6 +642,7 @@ impl<B: Backend> InitialCreation<B> {
         if self.phase()? != InitialPhase::Prepared {
             return Err(InitialError::Invalid);
         }
+        let (bound_intent, _, _) = self.completion_binding()?;
         let Self {
             opening,
             backend,
@@ -599,24 +661,7 @@ impl<B: Backend> InitialCreation<B> {
             .map_err(InitialError::Storage)?
             .to_vec();
         let completion = pending
-            .authorize_completion(
-                ckmg::CompletionIntent {
-                    outer_generation: store.version().map_err(InitialError::Storage)?,
-                    outer_digest: *blake3::hash(&outer_wire).as_bytes(),
-                    inner_version: 1,
-                    // The original initial inner commit may use a different ID from
-                    // the Keys receipt. Read its authenticated operation below before
-                    // accepting the completion. It was frozen with the initial wrapper.
-                    inner_operation: initial_operation(&store)?,
-                    inner_digest: *blake3::hash(&inner_wire).as_bytes(),
-                    nonce: intent.nonce,
-                    packed_evidence: intent.packed_evidence,
-                    prepared_at: intent.prepared_at,
-                    expires: intent.expires,
-                },
-                &mut clock,
-                authority,
-            )
+            .authorize_completion(bound_intent, &mut clock, authority)
             .await
             .map_err(InitialError::Keys)?;
         let operation = initial_operation(&store)?;
@@ -731,7 +776,8 @@ fn logical_version<B: Backend>(store: &cwst::Store<B>) -> Result<u64, InitialErr
         return Err(InitialError::Invalid);
     }
     let offset = u64::from(enrolled);
-    version.checked_sub(offset).ok_or(InitialError::Invalid)
+    let raw = version.checked_sub(offset).ok_or(InitialError::Invalid)?;
+    recovery_retirement::selected_base(store, raw)
 }
 
 struct CompletionClock<'a, C> {

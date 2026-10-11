@@ -8,6 +8,8 @@ pub struct PreparedRecovery<'attempt> {
     custody: ckmg::CheckpointBootstrap,
     evidence: &'attempt [u8],
     checked_at: u64,
+    available: std::cell::Cell<bool>,
+    floors: crate::records::tor::ReadFloors,
 }
 
 /// Verified public preparation, carrying only original sealed Keys bytes and
@@ -86,6 +88,8 @@ impl RecoveryCandidate {
             custody,
             evidence: &self.evidence,
             checked_at,
+            available: std::cell::Cell::new(true),
+            floors: crate::records::tor::ReadFloors::default(),
         })
     }
 }
@@ -100,6 +104,9 @@ impl PreparedRecovery<'_> {
     /// Independent read custody for normal member checks, available only after
     /// the provisional forced read and full member authority have succeeded.
     pub fn lineage_reader(&self) -> Result<ckmg::LineageReadCustody, OpenError> {
+        if !self.available.get() {
+            return Err(OpenError::Keys(ckmg::Error::Unauthorized));
+        }
         self.custody.lineage_reader().map_err(OpenError::Keys)
     }
 
@@ -108,12 +115,17 @@ impl PreparedRecovery<'_> {
         clock: &mut impl Clock,
         authority: &mut impl Authority,
     ) -> Result<(), OpenError> {
+        if !self.available.get() {
+            return Err(OpenError::Keys(ckmg::Error::Unauthorized));
+        }
+        self.available.set(false);
         let inspection = self.custody.inspection();
         let lineage = inspection.lineage();
         let now = clock.now().map_err(OpenError::Keys)?;
         if now < self.checked_at || now < inspection.last_time() {
             return Err(OpenError::Keys(ckmg::Error::Clock));
         }
+        self.checked_at = now;
         authority
             .check(ckmg::Authorization {
                 binding: &lineage.binding,
@@ -134,6 +146,7 @@ impl PreparedRecovery<'_> {
             return Err(OpenError::Keys(ckmg::Error::Clock));
         }
         self.checked_at = after;
+        self.available.set(true);
         Ok(())
     }
     /// Fixed original compound manifest/chunk custody, without an arbitrary
@@ -142,6 +155,9 @@ impl PreparedRecovery<'_> {
         &self,
         child: Option<u8>,
     ) -> Result<ckmg::CheckpointRecordCustody<'_>, OpenError> {
+        if !self.available.get() {
+            return Err(OpenError::Keys(ckmg::Error::Unauthorized));
+        }
         self.custody.record(child).map_err(OpenError::Keys)
     }
 
@@ -159,13 +175,14 @@ impl PreparedRecovery<'_> {
             .custody
             .passkey_reader(&self.opening.prf)
             .map_err(OpenError::Keys)?;
+        self.available.set(false);
         let backend = crate::TorPasskeyRecord::open(network, reader)
             .await
             .map_err(|_| OpenError::Records(crate::RecordError::Unavailable))?;
-        let record = cdht::runtime::Record::new(backend)
-            .map_err(|_| OpenError::Records(crate::RecordError::Invalid))?;
+        self.available.set(true);
         self.check_current(clock, authority).await?;
-        crate::PasskeyRecords::new(self.opening.locator, record).map_err(OpenError::Records)
+        crate::PasskeyRecords::tor(self.opening.locator, backend, self.floors.clone())
+            .map_err(OpenError::Records)
     }
 
     /// Read the existing compound checkpoint through the original signed Tor
@@ -182,6 +199,7 @@ impl PreparedRecovery<'_> {
         let retained = {
             let root =
                 crate::records::tor::TorReadRecord::checkpoint(network.clone(), self.record(None)?)
+                    .map(|record| record.with_read_floors(&self.floors))
                     .and_then(cdht::runtime::Record::new)
                     .map_err(|_| OpenError::Checkpoint(crate::CheckpointError::Unavailable))?;
             let mut children = Vec::with_capacity(crate::MAX_CHECKPOINT_RECORDS);
@@ -190,18 +208,56 @@ impl PreparedRecovery<'_> {
                     network.clone(),
                     self.record(Some(index as u8))?,
                 )
+                .map(|record| record.with_read_floors(&self.floors))
                 .and_then(cdht::runtime::Record::new)
                 .map_err(|_| OpenError::Checkpoint(crate::CheckpointError::Unavailable))?;
                 children.push(child);
             }
             let mut records = crate::CompoundRecords::new(&self.opening.scope, root, children)
                 .map_err(OpenError::Checkpoint)?;
+            self.available.set(false);
             records.checkpoint().await.map_err(OpenError::Checkpoint)?
         };
+        self.available.set(true);
         // A long read cannot retain a successful member observation. Recheck
         // after dropping record custody, and Store opening will check once more.
         self.check_current(clock, authority).await?;
         Ok(retained)
+    }
+
+    /// Authenticate only the actual local common-root Store and install its
+    /// committed observations before forcing passkey/compound network reads.
+    /// Supplied snapshots cannot construct this boundary; occupied restore uses
+    /// open_existing and never replaces this Store with older remote bytes.
+    pub async fn load_existing_read_floors<B: Backend>(
+        &mut self,
+        backend: &B,
+        clock: &mut impl Clock,
+        authority: &mut impl Authority,
+    ) -> Result<(), OpenError> {
+        self.check_current(clock, authority).await?;
+        self.available.set(false);
+        let store = cwst::Store::open(
+            crate::read_floors::BorrowBackend(backend),
+            self.custody.store_cipher().map_err(OpenError::Keys)?,
+            &self.opening.scope,
+        )
+        .await
+        .map_err(OpenError::Storage)?;
+        let carrier = crate::read_floors::load(&store).map_err(OpenError::Storage)?;
+        if let Some(carrier) = carrier {
+            let observed = clock.now().map_err(OpenError::Keys)?;
+            if observed < self.checked_at.max(carrier.checked_at) {
+                return Err(OpenError::Keys(ckmg::Error::Clock));
+            }
+            self.checked_at = observed;
+            self.floors
+                .install(&carrier.state)
+                .map_err(|_| OpenError::Records(crate::RecordError::Invalid))?;
+        }
+        self.available.set(true);
+        self.check_current(clock, authority).await?;
+        Ok(())
     }
 
     /// Open the existing local common-root checkpoint and reconcile its exact
@@ -247,13 +303,15 @@ impl PreparedRecovery<'_> {
     }
 
     async fn finish<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W>(
-        self,
+        mut self,
         store: cwst::Store<B>,
         mut owners: Owners<C, E, A, R, W>,
     ) -> Result<Vault<B, C, E, A, R, W>, OpenError> {
-        if owners.clock.now().map_err(OpenError::Keys)? < self.checked_at {
+        let observed = owners.clock.now().map_err(OpenError::Keys)?;
+        if observed < self.checked_at {
             return Err(OpenError::Keys(ckmg::Error::Clock));
         }
+        self.checked_at = observed;
         let sealed = store
             .read("keys", self.opening.locator.as_bytes())
             .map_err(OpenError::Storage)?
@@ -261,6 +319,36 @@ impl PreparedRecovery<'_> {
         if blake3::hash(sealed).as_bytes() != self.custody.inspection().sealed_digest() {
             return Err(OpenError::Keys(ckmg::Error::Unauthorized));
         }
+        if let Some(carrier) = crate::read_floors::load(&store).map_err(OpenError::Storage)? {
+            let now = owners.clock.now().map_err(OpenError::Keys)?;
+            if now < self.checked_at.max(carrier.checked_at) {
+                return Err(OpenError::Keys(ckmg::Error::Clock));
+            }
+            self.checked_at = now;
+            owners
+                .records
+                .install_read_floors(&carrier.state)
+                .map_err(OpenError::Records)?;
+            match owners.records.lookup(&self.opening.locator).await {
+                crate::RestoreLookup::Present(sealed)
+                    if blake3::hash(&sealed).as_bytes()
+                        == self.custody.inspection().sealed_digest() => {}
+                _ => return Err(OpenError::Records(crate::RecordError::Unavailable)),
+            }
+            let mut current = self;
+            current
+                .check_current(&mut owners.clock, &mut owners.authority)
+                .await?;
+            return current.finish_installed(store, owners).await;
+        }
+        self.finish_installed(store, owners).await
+    }
+
+    async fn finish_installed<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W>(
+        self,
+        store: cwst::Store<B>,
+        owners: Owners<C, E, A, R, W>,
+    ) -> Result<Vault<B, C, E, A, R, W>, OpenError> {
         let mut vault = Vault::new(
             store,
             &self.opening.scope,

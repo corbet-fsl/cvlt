@@ -1,6 +1,10 @@
 //! Original passkey root records over the authenticated Tor network capability.
 use cdht::{Backend as _, Network, NetworkBackend, RecordKey, Schema, runtime};
-use std::{cell::RefCell, collections::BTreeMap};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet},
+    rc::Rc,
+};
 
 pub(crate) struct Verifier;
 impl cdht::Verifier for Verifier {
@@ -14,6 +18,174 @@ impl cdht::Verifier for Verifier {
     }
 }
 
+// Shared only within one selection attempt. These are actual verified consensus
+// observations, not authority and not durable until the enclosing Store CAS.
+#[derive(Clone, Default)]
+pub(crate) struct ReadObservations {
+    values: Rc<RefCell<Vec<ReadObservation>>>,
+    fresh: Rc<RefCell<BTreeSet<(RecordKey, u32)>>>,
+}
+type ReadObservation = (cdht::Descriptor, u32, cdht::SignedValue);
+impl ReadObservations {
+    fn observe(
+        &self,
+        descriptor: cdht::Descriptor,
+        subkey: u32,
+        value: cdht::SignedValue,
+    ) -> Result<(), cdht::Error> {
+        let mut observations = self.values.borrow_mut();
+        let key = descriptor.key();
+        if let Some((_, _, previous)) = observations
+            .iter_mut()
+            .find(|(d, s, _)| d.key() == descriptor.key() && *s == subkey)
+        {
+            if previous.seq > value.seq
+                || (previous.seq == value.seq
+                    && (!previous.same_value(&value) || previous.signature != value.signature))
+            {
+                return Err(cdht::Error::Conflict);
+            }
+            *previous = value;
+        } else {
+            observations.push((descriptor, subkey, value));
+        }
+        self.fresh.borrow_mut().insert((key, subkey));
+        Ok(())
+    }
+
+    pub(crate) fn retain_state(&self, state: &cdht::ClientState) -> Result<(), cdht::Error> {
+        crate::read_floors::validate_state(state).map_err(|_| cdht::Error::Encoding)?;
+        self.retain_completed(state)
+    }
+
+    pub(crate) fn retain_completed(&self, state: &cdht::ClientState) -> Result<(), cdht::Error> {
+        let client =
+            cdht::Dht::with_state(cdht::LocalBackend::new(Verifier), Verifier, state.clone());
+        if client.state() != state {
+            return Err(cdht::Error::Encoding);
+        }
+        for (descriptor, subkey, value) in client.observations() {
+            // The original queue stores a signed obligation separately from the
+            // cache. Its exact still-queued bytes alone are planned publication.
+            // A different cached higher/equal observation remains a read floor;
+            // original remember never overwrites it with the queued obligation.
+            if state.queue().iter().any(|queued| {
+                queued.key == descriptor.key()
+                    && queued.subkey == subkey
+                    && queued.value.same_value(value)
+                    && queued.value.signature == value.signature
+            }) {
+                continue;
+            }
+            let mut observations = self.values.borrow_mut();
+            let previous = observations
+                .iter_mut()
+                .find(|(d, s, _)| d.key() == descriptor.key() && *s == subkey);
+            // This state can be discovered inside the just-read remote Store.
+            // Already-read overlapping slots must have met its durable floor;
+            // importing a higher old value cannot repair a stale selected read.
+            // Imported unread states instead merge their highest durable value;
+            // import never claims that a network read met this floor.
+            if let Some((_, _, previous)) = previous {
+                if (previous.seq < value.seq
+                    && self.fresh.borrow().contains(&(descriptor.key(), subkey)))
+                    || (previous.seq == value.seq
+                        && (!previous.same_value(value) || previous.signature != value.signature))
+                {
+                    return Err(cdht::Error::Conflict);
+                }
+                if previous.seq < value.seq {
+                    *previous = value.clone();
+                }
+                continue;
+            }
+            observations.push((descriptor.clone(), subkey, value.clone()));
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn state(
+        &self,
+        previous: &cdht::ClientState,
+    ) -> Result<cdht::ClientState, cdht::Error> {
+        let backend = cdht::LocalBackend::new(Verifier);
+        let mut client = cdht::Dht::with_state(backend.clone(), Verifier, previous.clone());
+        if client.state() != previous || !previous.queue().is_empty() {
+            return Err(cdht::Error::Encoding);
+        }
+        // Clone before the await; no RefCell borrow is held across owner calls.
+        let observations = self.values.borrow().clone();
+        for (descriptor, subkey, value) in observations {
+            backend.create(&descriptor).await?;
+            client.open(&descriptor.key()).await?;
+            if client
+                .observed_value(&descriptor.key(), subkey)?
+                .is_some_and(|prior| {
+                    prior.seq == value.seq
+                        && (!prior.same_value(&value) || prior.signature != value.signature)
+                })
+            {
+                return Err(cdht::Error::Conflict);
+            }
+            client.observe_original(&descriptor.key(), subkey, &value)?;
+        }
+        Ok(client.state().clone())
+    }
+}
+
+// A shared negative read boundary, never an accepting authority capability.
+// Installation comes only from a successfully authenticated local Store. Within
+// an attempt a different install refuses; restarting constructs a fresh port.
+#[derive(Clone, Default)]
+pub(crate) struct ReadFloors {
+    state: Rc<RefCell<Option<cdht::ClientState>>>,
+    observations: ReadObservations,
+}
+impl ReadFloors {
+    pub(crate) fn install(&self, state: &cdht::ClientState) -> Result<(), cdht::Error> {
+        crate::read_floors::validate_state(state).map_err(|_| cdht::Error::Encoding)?;
+        let mut retained = self.state.borrow_mut();
+        if retained.as_ref().is_some_and(|previous| previous != state) {
+            return Err(cdht::Error::Conflict);
+        }
+        *retained = Some(state.clone());
+        Ok(())
+    }
+    fn observe(
+        &self,
+        identity: &runtime::Identity,
+        descriptor: cdht::Descriptor,
+        subkey: u32,
+        value: &cdht::SignedValue,
+    ) -> Result<(), cdht::Error> {
+        if let Some(state) = self.state.borrow().as_ref() {
+            let client =
+                cdht::Dht::with_state(cdht::LocalBackend::new(Verifier), Verifier, state.clone());
+            match client.schema(&identity.key) {
+                Ok((owner, schema)) => {
+                    if owner != identity.owner || schema != identity.schema {
+                        return Err(cdht::Error::WrongRecord);
+                    }
+                    if client
+                        .observed_value(&identity.key, subkey)?
+                        .is_some_and(|previous| {
+                            previous.seq > value.seq
+                                || (previous.seq == value.seq
+                                    && (!previous.same_value(value)
+                                        || previous.signature != value.signature))
+                        })
+                    {
+                        return Err(cdht::Error::Conflict);
+                    }
+                }
+                Err(cdht::Error::NotOpen) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        self.observations.observe(descriptor, subkey, value.clone())
+    }
+}
+
 /// Read-only recovery handle over original signed Tor Records. Its Keys reader
 /// borrows the same PreparedOpen, so it cannot survive that custody owner's drop.
 /// Every read requires the original three-holder agreement, validates ciphertext
@@ -24,6 +196,9 @@ pub struct TorReadRecord<'unlock, N: Network> {
     reader: Reader<'unlock>,
     identity: runtime::Identity,
     sequences: RefCell<BTreeMap<u32, u32>>,
+    observed: RefCell<BTreeMap<u32, cdht::SignedValue>>,
+    observations: Option<ReadObservations>,
+    floors: Option<ReadFloors>,
 }
 /// Original per-passkey recovery record, constrained to read-only custody.
 pub type TorPasskeyRecord<'unlock, N> = TorReadRecord<'unlock, N>;
@@ -101,7 +276,67 @@ impl<'unlock, N: Network> TorReadRecord<'unlock, N> {
                 writer: None,
             },
             sequences: RefCell::new(BTreeMap::new()),
+            observed: RefCell::new(BTreeMap::new()),
+            observations: None,
+            floors: None,
         })
+    }
+
+    /// Inherit original durable floors and completed signed observations. Queued
+    /// values are planned publications, so their bytes cannot fence a different
+    /// legitimate winner. No cached value substitutes for fresh consensus below.
+    pub(crate) fn with_state_floors(self, state: &cdht::ClientState) -> Result<Self, cdht::Error> {
+        let client =
+            cdht::Dht::with_state(cdht::LocalBackend::new(Verifier), Verifier, state.clone());
+        if client.state() != state {
+            return Err(cdht::Error::Encoding);
+        }
+        match client.schema(&self.identity.key) {
+            Ok((owner, schema)) => {
+                if owner != self.identity.owner || schema != self.identity.schema {
+                    return Err(cdht::Error::WrongRecord);
+                }
+                for subkey in 0..self.identity.schema.subkey_count() as u32 {
+                    if let Some(value) = client.observed_value(&self.identity.key, subkey)? {
+                        let mut sequences = self.sequences.borrow_mut();
+                        let floor = sequences.entry(subkey).or_insert(value.seq);
+                        *floor = (*floor).max(value.seq);
+                        drop(sequences);
+                        if !state.queue().iter().any(|queued| {
+                            queued.key == self.identity.key && queued.subkey == subkey
+                        }) {
+                            let mut observed = self.observed.borrow_mut();
+                            if observed.get(&subkey).is_some_and(|prior| {
+                                prior.seq == value.seq
+                                    && (!prior.same_value(value)
+                                        || prior.signature != value.signature)
+                            }) {
+                                return Err(cdht::Error::Conflict);
+                            }
+                            if !observed
+                                .get(&subkey)
+                                .is_some_and(|prior| prior.seq > value.seq)
+                            {
+                                observed.insert(subkey, value.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            Err(cdht::Error::NotOpen) => {}
+            Err(error) => return Err(error),
+        }
+        Ok(self)
+    }
+
+    pub(crate) fn with_observations(mut self, observations: &ReadObservations) -> Self {
+        self.observations = Some(observations.clone());
+        self
+    }
+
+    pub(crate) fn with_read_floors(mut self, floors: &ReadFloors) -> Self {
+        self.floors = Some(floors.clone());
+        self
     }
 
     async fn open_reader(network: N, reader: Reader<'unlock>) -> Result<Self, cdht::Error> {
@@ -127,6 +362,9 @@ impl<'unlock, N: Network> TorReadRecord<'unlock, N> {
                 writer: None,
             },
             sequences: RefCell::new(BTreeMap::new()),
+            observed: RefCell::new(BTreeMap::new()),
+            observations: None,
+            floors: None,
         })
     }
 }
@@ -192,7 +430,20 @@ impl<N: Network> runtime::Backend for TorReadRecord<'_, N> {
         {
             return Err(cdht::Error::Conflict);
         }
+        if self.observed.borrow().get(&subkey).is_some_and(|previous| {
+            previous.seq == value.seq
+                && (!previous.same_value(&value) || previous.signature != value.signature)
+        }) {
+            return Err(cdht::Error::Conflict);
+        }
         self.sequences.borrow_mut().insert(subkey, value.seq);
+        self.observed.borrow_mut().insert(subkey, value.clone());
+        if let Some(floors) = &self.floors {
+            floors.observe(&self.identity, descriptor.clone(), subkey, &value)?;
+        }
+        if let Some(observations) = &self.observations {
+            observations.observe(descriptor, subkey, value.clone())?;
+        }
         let nonce = value.nonce.ok_or(cdht::Error::Decrypt)?;
         let data = self
             .reader

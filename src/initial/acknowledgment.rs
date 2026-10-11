@@ -279,7 +279,7 @@ impl<B: Backend> InitialCreation<B> {
     pub(super) fn acknowledged_state(&self) -> Result<ckmg::CheckpointInspection, InitialError> {
         // Both outcomes consume generation four once. Their authenticated
         // record shapes distinguish acknowledgment from a terminal conflict.
-        if !matches!(logical_version(&self.store)?, 5 | 6) {
+        if logical_version(&self.store)? < 5 {
             return Err(InitialError::Invalid);
         }
         self.staged_state()?;

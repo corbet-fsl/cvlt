@@ -374,6 +374,18 @@ fn original_receipt_and_passkey_assertion_are_bound_to_current_charter_and_deadl
         fixture.receipt.attested_lineage().unwrap().1
     );
     assert_eq!(observed.valid_until(), NOW + 500);
+    assert_eq!(
+        observed.credential_id(NOW).unwrap(),
+        fixture.assertion.credential_id
+    );
+    assert_eq!(
+        observed.credential_id(NOW - 1).unwrap_err(),
+        LineageError::Clock
+    );
+    assert_eq!(
+        observed.credential_id(NOW + 500).unwrap_err(),
+        LineageError::Policy(cchr::Error::Expired)
+    );
     assert_eq!(observed.charter_revision(), 1);
     assert_eq!(
         format!("{observed:?}"),

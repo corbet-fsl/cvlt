@@ -5,6 +5,7 @@ mod compound;
 mod existing;
 mod initial;
 mod lineage;
+mod read_floors;
 mod records;
 mod retention;
 mod storage;
@@ -17,7 +18,7 @@ use cwst::backend::Backend;
 pub use existing::{OpenError, Owners, PreparedOpen, PreparedRecovery, RecoveryCandidate};
 pub use initial::{
     InitialAcknowledgment, InitialCreation, InitialError, InitialLineageRead, InitialPhase,
-    InitialPublication, RetainedGenesis, UnenrolledInitial,
+    InitialPublication, RetainedGenesis, RetiredInitial, UnenrolledInitial,
 };
 pub use lineage::{
     LineageError, LineageRead, LineageRecords, VerifiedLineageObservation, verify_lineage,
@@ -57,6 +58,12 @@ impl std::fmt::Debug for RestoreLookup {
 pub trait Records {
     /// Look up the passkey-derived opaque locator with explicit availability semantics.
     fn lookup(&mut self, locator: &Locator) -> impl std::future::Future<Output = RestoreLookup>;
+    /// Install original signed read floors from an authenticated Store before
+    /// further lookups. Adapters without this actual owner capability refuse.
+    /// This establishes only negative read boundaries, never current authority.
+    fn install_read_floors(&mut self, _state: &cdht::ClientState) -> Result<(), RecordError> {
+        Err(RecordError::Unavailable)
+    }
 }
 /// Thin composition; private domain state remains exclusively in its owner.
 /// The Wallet type is supplied by the accounting owner. There is no fake proof engine.
@@ -73,14 +80,22 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W> Vault<B, C, 
     pub fn new(
         store: cwst::Store<B>,
         scope: &str,
-        clock: C,
+        mut clock: C,
         entropy: E,
         authority: A,
-        records: R,
+        mut records: R,
         wallet: W,
     ) -> Result<Self, Error> {
         if !store.is_scope(scope) {
             return Err(Error::Scope);
+        }
+        if let Some(carrier) = read_floors::load(&store).map_err(|_| Error::Invalid)? {
+            if clock.now().map_err(|_| Error::Invalid)? < carrier.checked_at {
+                return Err(Error::Invalid);
+            }
+            records
+                .install_read_floors(&carrier.state)
+                .map_err(|_| Error::Invalid)?;
         }
         let storage = shared_store(store);
         let key_store = KeyStore::new(storage.clone(), scope)?;

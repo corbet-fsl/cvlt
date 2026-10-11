@@ -114,9 +114,12 @@ impl PreparedOpen {
         let backend = crate::TorPasskeyRecord::open(network, reader)
             .await
             .map_err(|_| OpenError::Records(crate::RecordError::Unavailable))?;
-        let record = cdht::runtime::Record::new(backend)
-            .map_err(|_| OpenError::Records(crate::RecordError::Invalid))?;
-        crate::PasskeyRecords::new(self.locator, record).map_err(OpenError::Records)
+        crate::PasskeyRecords::tor(
+            self.locator,
+            backend,
+            crate::records::tor::ReadFloors::default(),
+        )
+        .map_err(OpenError::Records)
     }
 
     /// Inspect only the exact checkpoint returned for this opening's locator.

@@ -128,6 +128,26 @@ impl LineageEvidence {
         Ok(evidence)
     }
 
+    /// Decode the original Padme/compressed Records envelope without granting
+    /// authority. Exact retained bytes remain the immutable publication input;
+    /// callers must verify the decoded evidence under current original owners.
+    pub fn from_packed(packed: &[u8]) -> Result<Self, EvidenceError> {
+        if packed.is_empty() || packed.len() > cdht::MAX_SUBKEY_SIZE {
+            return Err(EvidenceError::Limit);
+        }
+        let compressed =
+            zeroize::Zeroizing::new(cprz_pad::unpad(packed).map_err(|_| EvidenceError::Invalid)?);
+        let bytes = zeroize::Zeroizing::new(
+            cprz::portable::decompress(
+                &compressed,
+                cdht::MAX_SUBKEY_SIZE,
+                MAX_LINEAGE_EVIDENCE_BYTES,
+            )
+            .map_err(|_| EvidenceError::Invalid)?,
+        );
+        Self::from_bytes(&bytes)
+    }
+
     /// Capture existing public owner values during a synchronous current-Policy
     /// callback. The returned container has no authority across subsequent awaits.
     pub fn prepare(

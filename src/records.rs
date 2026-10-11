@@ -72,6 +72,7 @@ pub struct PasskeyRecords<B: Backend> {
     local: ckmg::Locator,
     record: Record<B>,
     observed_sequence: Option<u32>,
+    floors: Option<tor::ReadFloors>,
 }
 impl<B: Backend> PasskeyRecords<B> {
     /// Bind original same-passkey/scope capabilities in the trusted composer.
@@ -85,6 +86,7 @@ impl<B: Backend> PasskeyRecords<B> {
             local,
             record,
             observed_sequence: None,
+            floors: None,
         })
     }
     /// Release the original handle for explicit owner runtime shutdown.
@@ -179,7 +181,27 @@ impl<B: Backend> PasskeyRecords<B> {
         Ok(outcome)
     }
 }
+impl<'a, N: cdht::Network> PasskeyRecords<TorPasskeyRecord<'a, N>> {
+    pub(crate) fn tor(
+        local: Locator,
+        backend: TorPasskeyRecord<'a, N>,
+        floors: tor::ReadFloors,
+    ) -> Result<Self, RecordError> {
+        let record =
+            Record::new(backend.with_read_floors(&floors)).map_err(|_| RecordError::Invalid)?;
+        let mut records = Self::new(local, record)?;
+        records.floors = Some(floors);
+        Ok(records)
+    }
+}
 impl<B: Backend> Records for PasskeyRecords<B> {
+    fn install_read_floors(&mut self, state: &cdht::ClientState) -> Result<(), RecordError> {
+        self.floors
+            .as_ref()
+            .ok_or(RecordError::Unavailable)?
+            .install(state)
+            .map_err(|_| RecordError::Invalid)
+    }
     async fn lookup(&mut self, locator: &Locator) -> RestoreLookup {
         match self.checkpoint(locator).await {
             Ok(checkpoint) => RestoreLookup::Present(checkpoint.sealed.to_vec()),

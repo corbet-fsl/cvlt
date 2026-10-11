@@ -65,6 +65,14 @@ impl VerifiedLineageObservation<'_> {
         self.live(now)?;
         Ok(self.author)
     }
+    /// Exact original credential which verified this receipt assertion. This is
+    /// public identity within the same current owner cut, never new authority.
+    pub fn credential_id(&self, now: u64) -> Result<&[u8], LineageError> {
+        self.live(now)?;
+        self.certificate
+            .credential_id(now)
+            .map_err(LineageError::Policy)
+    }
     /// Exclusive bound from the original binding and complete Charter lifetimes.
     pub fn valid_until(&self) -> u64 {
         self.certificate.valid_until()
