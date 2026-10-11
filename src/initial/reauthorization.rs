@@ -19,6 +19,12 @@ pub struct AcknowledgedInitialCandidate {
 /// It is deliberately not a generic lineage observation or Keys capability.
 pub struct CurrentInitialLineage<'a>(crate::VerifiedLineageObservation<'a>);
 impl CurrentInitialLineage<'_> {
+    /// Exclusive original current certificate/Charter bound. This exposes no
+    /// signing authority; a composer must separately retain every live owner.
+    pub fn valid_until(&self) -> u64 {
+        self.0.valid_until()
+    }
+
     /// Original exact lineage within this current verification lifetime.
     pub fn lineage(&self, now: u64) -> Result<&ckmg::Lineage, crate::LineageError> {
         self.0.lineage(now)
