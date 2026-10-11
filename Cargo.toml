@@ -21,7 +21,7 @@ wallet = ["dep:cwlt", "ckmg/passport", "ckmg/wallet-engine"]
 native-records = ["ckmg/native-records", "dep:cmsh"]
 
 [dependencies]
-cwlt = { git = "https://git.corbet.ch/corbet-foss/cwlt", branch = "main", default-features = false, features = ["passport", "record"], optional = true }
+cwlt = { git = "https://git.corbet.ch/corbet-foss/cwlt", branch = "main", default-features = false, features = ["passport", "record", "account"], optional = true }
 cchr = { git = "https://git.corbet.ch/corbet-foss/cchr.git", branch = "v01" }
 ckyh = { git = "https://git.corbet.ch/corbet-foss/ckyh", branch = "main", default-features = false }
 cprz = { git = "https://git.corbet.ch/corbet-foss/cprz.git", branch = "v01", default-features = false }

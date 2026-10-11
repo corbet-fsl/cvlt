@@ -187,6 +187,13 @@ impl<B: Backend> InitialAcknowledgment<B> {
                     .await?,
                 );
             }
+            #[cfg(feature = "wallet")]
+            if enrolled && lineage.binding.community() != "wallet" {
+                mutations.push(
+                    crate::wallet::account::prepare_initial_account(&mut keys, &storage, &receipt)
+                        .await?,
+                );
+            }
             if enrolled {
                 let provenance = self
                     .completion

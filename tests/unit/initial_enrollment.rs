@@ -522,3 +522,7 @@ mod acknowledged_provenance_tests;
 #[cfg(feature = "wallet")]
 #[path = "initial_wallet_ack.rs"]
 mod wallet_ack_tests;
+
+#[cfg(feature = "wallet")]
+#[path = "initial_account_ack.rs"]
+mod account_ack_tests;

@@ -237,6 +237,66 @@ pub(super) async fn recovered_wallet_holder(
     (record, nym)
 }
 
+#[cfg(feature = "wallet")]
+pub(super) async fn recovered_account_owner(
+    initial: &InitialCreation<Destination>,
+    member: Member,
+) -> (Vec<u8>, ckmg::wallet_engine::account_key::Projection) {
+    let mut current = recovery_publication_tests::RecoveryMember(member, false);
+    let recovered = initial
+        .acknowledged_recovery(&mut TestClock(10), &mut current)
+        .await
+        .unwrap();
+    assert_eq!(recovered.inner.version().unwrap(), 2);
+    let scope = initial
+        .receipt()
+        .attested_lineage()
+        .unwrap()
+        .0
+        .binding
+        .community();
+    assert_ne!(scope, "wallet");
+    assert!(
+        recovered
+            .inner
+            .read("cwlt.passport", b"holder.v1")
+            .unwrap()
+            .is_none()
+    );
+    let record = recovered
+        .inner
+        .read("cwlt.account", b"owner.v1")
+        .unwrap()
+        .unwrap()
+        .to_vec();
+    let operation = *initial.receipt().operation.as_bytes();
+    let receipt = recovered.inner.receipt(&operation).unwrap();
+    assert!(receipt.is_commit(&recovered.inner, &operation));
+    assert!(receipt.contains_record(
+        "cwlt.account",
+        b"owner.v1",
+        blake3::hash(&record).as_bytes()
+    ));
+    let mut vault = crate::Vault::new(
+        recovered.inner,
+        scope,
+        TestClock(10),
+        FixtureEntropy,
+        current.0,
+        UnavailableRecords,
+        (),
+    )
+    .unwrap();
+    vault
+        .keys()
+        .unlock(&initial.opening.prf, scope)
+        .await
+        .unwrap();
+    let mut account = vault.restore_community_account().await.unwrap();
+    let public = account.account_projection().await.unwrap();
+    (record, public)
+}
+
 async fn staged(destination: Destination) -> (InitialCreation<Destination>, SameKey, Network) {
     let (initial, mut key) = genuine(destination.clone()).await;
     let pair = initial.retained().unwrap();

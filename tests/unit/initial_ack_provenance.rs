@@ -72,7 +72,19 @@ shared!(
 );
 
 async fn enrolled_ack() -> (InitialCreation<Destination>, SameKey, Network, Member) {
-    let destination = Destination::new();
+    let (initial, key, network) = enrolled_staged(Destination::new()).await;
+    let mut member = Member::new(&initial, &key);
+    let pending_ack = attempt(initial, network.clone(), &mut member).await;
+    let acknowledged = pending_ack
+        .acknowledge(&mut TestClock(10), &mut ckmg::SystemEntropy, &mut member)
+        .await
+        .unwrap();
+    (acknowledged, key, network, member)
+}
+
+pub(super) async fn enrolled_staged(
+    destination: Destination,
+) -> (InitialCreation<Destination>, SameKey, Network) {
     let mut enrolling = Enrolling::new(destination.clone()).await;
     let pending = enrolling.initial.take().unwrap();
     let auth = enrolling.accept().await;
@@ -134,13 +146,7 @@ async fn enrolled_ack() -> (InitialCreation<Destination>, SameKey, Network, Memb
         &[Some(value.clone()), Some(value.clone()), Some(value)],
     )
     .await;
-    let mut member = Member::new(&initial, &key);
-    let pending_ack = attempt(initial, network.clone(), &mut member).await;
-    let acknowledged = pending_ack
-        .acknowledge(&mut TestClock(10), &mut ckmg::SystemEntropy, &mut member)
-        .await
-        .unwrap();
-    (acknowledged, key, network, member)
+    (initial, key, network)
 }
 
 shared!(

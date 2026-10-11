@@ -5,6 +5,8 @@ use cwst::{Store, backend::Backend};
 
 pub(crate) mod global;
 pub use global::GlobalPassportCustody;
+pub(crate) mod account;
+pub use account::CommunityAccountCustody;
 
 /// Original durable passport and epoch-record owners. No accepted balance,
 /// external proof runtime, Wave reservation or release is created by restoration.
@@ -24,6 +26,8 @@ pub enum WalletRestoreError {
     Passport(cwlt::passport::PersistenceError),
     /// Original epoch-record ciphertext or checkpoint was refused.
     Record(cwlt::record::Error),
+    /// Original pending account capsule or checkpoint was refused.
+    Account(cwlt::account_owner::Error),
     /// Vault scope or checkpoint changed during construction.
     Scope,
 }
