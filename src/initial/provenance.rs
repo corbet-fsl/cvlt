@@ -19,13 +19,13 @@ impl<B: Backend> InitialCreation<B> {
         candidate.commitment().map_err(InitialError::Keys)
     }
 
-    /// Original authenticated Prepared checkpoint identity for the trusted
+    /// Original authenticated Prepared/Staged checkpoint identity for the trusted
     /// composer to compare at each dedicated completion check. These public
     /// coordinates grant no authority and cannot refresh the immutable intent.
     pub fn completion_binding(
         &self,
     ) -> Result<(ckmg::CompletionIntent, ckmg::Locator, [u8; 32]), InitialError> {
-        if self.phase()? != InitialPhase::Prepared {
+        if !matches!(self.phase()?, InitialPhase::Prepared | InitialPhase::Staged) {
             return Err(InitialError::Invalid);
         }
         let intent = decode_intent(required(&self.store, INTENT)?)?;

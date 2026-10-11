@@ -30,6 +30,22 @@ impl<B: Backend> InitialLineageRead<B> {
     pub fn checked_at(&self) -> u64 {
         self.checked_at
     }
+
+    /// Immutable original candidate identity, not a completion grant.
+    pub fn enrollment_commitment(&self) -> Result<[u8; 32], InitialError> {
+        self.creation.enrollment_commitment()
+    }
+    /// Exact original retained publication identity, never a renewed intent.
+    pub fn publication_commitment(&self) -> Result<[u8; 32], InitialError> {
+        self.creation.publication_commitment()
+    }
+    /// Public coordinates from this actual forced-read owner's authenticated
+    /// Store. The dedicated original completion checker must still revalidate.
+    pub fn completion_binding(
+        &self,
+    ) -> Result<(ckmg::CompletionIntent, ckmg::Locator, [u8; 32]), InitialError> {
+        self.creation.completion_binding()
+    }
 }
 impl<B: Backend> std::fmt::Debug for InitialLineageRead<B> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
