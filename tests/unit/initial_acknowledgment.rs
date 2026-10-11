@@ -5,6 +5,9 @@ use super::*;
 use cdht::Backend as _;
 use std::cell::RefCell;
 
+#[path = "initial_recovery_publication.rs"]
+mod recovery_publication_tests;
+
 struct Member {
     original: ExactCompletion,
     credential: Vec<u8>,

@@ -8,6 +8,8 @@ use serde_json::json;
 
 #[path = "initial_acknowledgment.rs"]
 mod acknowledgment_tests;
+#[path = "initial_enrollment.rs"]
+mod enrollment_tests;
 
 const ORIGIN: &str = "https://members.garden.example.test";
 const RP: &str = "members.garden.example.test";

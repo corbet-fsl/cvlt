@@ -48,7 +48,7 @@ impl<B: Backend> InitialCreation<B> {
         }
         self.store
             .commit(
-                3,
+                self.store.version().map_err(InitialError::Storage)?,
                 *self.pending.receipt().operation.as_bytes(),
                 &[cwst::Change::Put {
                     owner: OWNER,
@@ -88,7 +88,7 @@ impl<B: Backend> InitialCreation<B> {
     }
 
     pub(super) fn staged_state(&self) -> Result<cdht::ClientState, InitialError> {
-        if !matches!(self.store.version().map_err(InitialError::Storage)?, 4 | 5) {
+        if !matches!(logical_version(&self.store)?, 4..=6) {
             return Err(InitialError::Invalid);
         }
         let bytes = required(&self.store, QUEUE)?;
@@ -119,7 +119,7 @@ impl<B: Backend> InitialCreation<B> {
     }
 
     pub(super) fn conflicted_state(&self) -> Result<cdht::ClientState, InitialError> {
-        if self.store.version().map_err(InitialError::Storage)? != 5 {
+        if logical_version(&self.store)? != 5 {
             return Err(InitialError::Invalid);
         }
         let bytes = required(&self.store, QUEUE)?;
@@ -178,7 +178,7 @@ impl<B: Backend> InitialCreation<B> {
         }
         self.store
             .commit(
-                4,
+                self.store.version().map_err(InitialError::Storage)?,
                 *self.pending.receipt().operation.as_bytes(),
                 &[cwst::Change::Put {
                     owner: OWNER,

@@ -240,7 +240,7 @@ fn unpack(padded: &[u8]) -> Result<Vec<u8>, RecordError> {
     Ok(wrapped.to_vec())
 }
 
-fn pack_recovery(
+pub(crate) fn pack_recovery(
     wrapped: &[u8],
     evidence: &crate::LineageEvidence,
 ) -> Result<Zeroizing<Vec<u8>>, RecordError> {

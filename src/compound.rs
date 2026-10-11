@@ -68,6 +68,27 @@ impl std::fmt::Debug for PreparedCheckpoint {
     }
 }
 
+impl PreparedCheckpoint {
+    // Preserve the original parts-before-manifest ordering without pretending
+    // that private preparation is an engine's durable queue or a transport.
+    pub(crate) fn for_each_part(
+        &self,
+        mut retain: impl FnMut(Option<usize>, u32, u32, &[u8]) -> Result<(), CheckpointError>,
+    ) -> Result<(), CheckpointError> {
+        let multi = self.manifests.len() > 1;
+        for (index, chunk) in self.packed.chunks(RECORD_BYTES).enumerate() {
+            let child = multi.then_some(index);
+            for (part, bytes) in chunk.chunks(cdht::MAX_SUBKEY_SIZE).enumerate() {
+                retain(child, (part + 1) as u32, self.sequence, bytes)?;
+            }
+            if multi {
+                retain(child, 0, self.sequence, &self.manifests[index + 1])?;
+            }
+        }
+        retain(None, 0, self.sequence, &self.manifests[0])
+    }
+}
+
 /// A complete forced Records observation. Storage authentication is still required
 /// before installation; neither this object nor its version authorizes G3.
 pub struct RetainedCheckpoint {

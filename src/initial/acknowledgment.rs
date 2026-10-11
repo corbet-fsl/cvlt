@@ -222,7 +222,7 @@ impl<B: Backend> InitialAcknowledgment<B> {
         let committed = self
             .store
             .commit_with_receipt(
-                4,
+                self.store.version().map_err(InitialError::Storage)?,
                 operation,
                 &[
                     cwst::Change::Put {
@@ -279,7 +279,7 @@ impl<B: Backend> InitialCreation<B> {
     pub(super) fn acknowledged_state(&self) -> Result<ckmg::CheckpointInspection, InitialError> {
         // Both outcomes consume generation four once. Their authenticated
         // record shapes distinguish acknowledgment from a terminal conflict.
-        if self.store.version().map_err(InitialError::Storage)? != 5 {
+        if !matches!(logical_version(&self.store)?, 5 | 6) {
             return Err(InitialError::Invalid);
         }
         self.staged_state()?;

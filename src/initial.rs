@@ -11,6 +11,9 @@ mod lineage;
 pub use lineage::InitialLineageRead;
 mod acknowledgment;
 pub use acknowledgment::InitialAcknowledgment;
+mod enrollment;
+pub use enrollment::UnenrolledInitial;
+mod recovery_publication;
 
 const OWNER: &str = "initial-creation";
 const INNER: &[u8] = b"common-root-store";
@@ -22,6 +25,9 @@ const VALUE: &[u8] = b"genesis-value";
 const QUEUE: &[u8] = b"genesis-client-state";
 const ACKNOWLEDGED_INNER: &[u8] = b"acknowledged-common-root-store";
 const ACKNOWLEDGED_KEYS: &[u8] = b"acknowledged-keys";
+const ENROLLMENT: &[u8] = b"unenrolled-candidate";
+const ENROLLMENT_FINISH: &[u8] = b"unenrolled-finish";
+const RECOVERY: &[u8] = b"recovery-publication";
 
 /// Coarse failure; absence never authorizes another Create.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +70,9 @@ pub enum InitialPhase {
     /// Original Keys acknowledgment and evidence are durably retained together.
     /// Recovery publication and outer retirement remain required; no Vault escapes.
     Acknowledged,
+    /// Original recovery outputs and their complete client queue are durable.
+    /// Forced recovery reads and outer retirement remain required.
+    RecoveryStaged,
 }
 
 struct BackendRef<B>(Rc<B>);
@@ -351,7 +360,30 @@ impl<B: Backend> InitialCreation<B> {
             .store
             .read(OWNER, QUEUE)
             .map_err(InitialError::Storage)?;
-        let version = self.store.version().map_err(InitialError::Storage)?;
+        let version = logical_version(&self.store)?;
+        if version != 6
+            && self
+                .store
+                .read(OWNER, RECOVERY)
+                .map_err(InitialError::Storage)?
+                .is_some()
+        {
+            return Err(InitialError::Invalid);
+        }
+        if let Some(bytes) = self
+            .store
+            .read(OWNER, ENROLLMENT)
+            .map_err(InitialError::Storage)?
+        {
+            let candidate =
+                ckmg::UnenrolledCreation::reopen(&self.opening.prf, &self.opening.scope, bytes)
+                    .map_err(InitialError::Keys)?;
+            if required(&self.store, ENROLLMENT_FINISH)?.is_empty()
+                || !candidate.matches_pending(&self.pending)
+            {
+                return Err(InitialError::Invalid);
+            }
+        }
         let acknowledged_inner = self
             .store
             .read(OWNER, ACKNOWLEDGED_INNER)
@@ -360,7 +392,9 @@ impl<B: Backend> InitialCreation<B> {
             .store
             .read(OWNER, ACKNOWLEDGED_KEYS)
             .map_err(InitialError::Storage)?;
-        if version != 5 && (acknowledged_inner.is_some() || acknowledged_keys.is_some()) {
+        if !matches!(version, 5 | 6)
+            && (acknowledged_inner.is_some() || acknowledged_keys.is_some())
+        {
             return Err(InitialError::Invalid);
         }
         let expected_operation = if version == 1 {
@@ -410,6 +444,14 @@ impl<B: Backend> InitialCreation<B> {
                 self.acknowledged_state()?;
                 Ok(InitialPhase::Acknowledged)
             }
+            (6, Some(bytes), Some(_), Some(_), Some(_))
+                if acknowledged_inner.is_some() && acknowledged_keys.is_some() =>
+            {
+                decode_intent(bytes)?;
+                self.acknowledged_state()?;
+                self.recovery_state()?;
+                Ok(InitialPhase::RecoveryStaged)
+            }
             _ => Err(InitialError::Invalid),
         }
     }
@@ -453,7 +495,7 @@ impl<B: Backend> InitialCreation<B> {
         }
         self.store
             .commit(
-                1,
+                self.store.version().map_err(InitialError::Storage)?,
                 *self.pending.receipt().operation.as_bytes(),
                 &[cwst::Change::Put {
                     owner: OWNER,
@@ -477,7 +519,7 @@ impl<B: Backend> InitialCreation<B> {
     /// Read only the exact committed original outputs. Reopening never signs
     /// anew or manufactures another nonce, deadline, receipt or creation root.
     pub fn retained(&self) -> Result<RetainedGenesis, InitialError> {
-        if !matches!(self.store.version().map_err(InitialError::Storage)?, 3..=5) {
+        if !matches!(logical_version(&self.store)?, 3..=6) {
             return Err(InitialError::Invalid);
         }
         let descriptor =
@@ -514,7 +556,7 @@ impl<B: Backend> InitialCreation<B> {
             )
             .map_err(|_| InitialError::Invalid)?;
         let outputs = self.store.load_pending().map_err(InitialError::Storage)?;
-        if outputs.len() != 2
+        if (logical_version(&self.store)? < 6 && outputs.len() != 2)
             || !outputs
                 .iter()
                 .any(|o| o.id == [1; 32] && o.bytes == descriptor.as_bytes())
@@ -624,7 +666,7 @@ impl<B: Backend> InitialCreation<B> {
             .map_err(InitialError::Keys)?;
         store
             .commit(
-                2,
+                store.version().map_err(InitialError::Storage)?,
                 *receipt.receipt().operation.as_bytes(),
                 &[
                     cwst::Change::Put {
@@ -671,6 +713,25 @@ fn initial_operation<B: Backend>(store: &cwst::Store<B>) -> Result<[u8; 32], Ini
     required(store, OPERATION)?
         .try_into()
         .map_err(|_| InitialError::Invalid)
+}
+
+// The original flow starts at generation one. Enrollment retains its candidate
+// in generation one and atomically activates generation two. Never reset or
+// recreate the outer Store to disguise that additional durable transition.
+fn logical_version<B: Backend>(store: &cwst::Store<B>) -> Result<u64, InitialError> {
+    let version = store.version().map_err(InitialError::Storage)?;
+    let enrolled = store
+        .read(OWNER, ENROLLMENT)
+        .map_err(InitialError::Storage)?
+        .is_some();
+    let finish = store
+        .read(OWNER, ENROLLMENT_FINISH)
+        .map_err(InitialError::Storage)?;
+    if enrolled != finish.is_some() || finish.is_some_and(<[u8]>::is_empty) {
+        return Err(InitialError::Invalid);
+    }
+    let offset = u64::from(enrolled);
+    version.checked_sub(offset).ok_or(InitialError::Invalid)
 }
 
 struct CompletionClock<'a, C> {
