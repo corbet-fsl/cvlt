@@ -6,6 +6,7 @@ repository = "https://git.corbet.ch/corbet-libs/cvlt.git"
 kind = "commands"
 commands = [["bash", ".ci/verify.sh"]]
 cache_tools = [["rustc", "-vV"], ["cargo", "--version"], ["rustup", "run", "nightly", "rustc", "-vV"], ["rustup", "run", "nightly", "cargo", "llvm-cov", "--version"], ["python3", "--version"], ["python3", "-c", "import selenium; print(selenium.__version__)"], ["node", "--version"], ["wasm-pack", "--version"], ["clang", "--version"], ["chromedriver", "--version"], ["chromium", "--version"]]
+cache_env = ["PKG_CONFIG_PATH", "NIX_CFLAGS_COMPILE", "NIX_LDFLAGS", "LD_LIBRARY_PATH"]
 cache_outputs = ["coverage.json", "coverage.lcov", "coverage.txt", "wasm-coverage.json", "wasm-coverage.lcov", "wasm-coverage.txt"]
 
 # Original native owner gates; the full cached platform/coverage check stays intact.

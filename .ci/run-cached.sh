@@ -90,8 +90,8 @@ chromedriver --version
 chromium --version
 rustup run nightly rustc -vV
 rustup run nightly cargo llvm-cov --version
-if [ "$CHECKS" = "resolve-dependencies" ] || [ "$CHECKS" = "native" ]; then
+# openssl-sys and libdbus are built by dev-dependencies; run inside the pinned shell.
+nix-shell .ci/check-shell.nix --run 'set -e; if [ "$CHECKS" = "resolve-dependencies" ] || [ "$CHECKS" = "native" ]; then
   exec "$CCID_BIN" check --repo "$PWD" --check "$CHECKS"
 fi
-"$CCID_BIN" cached --repo "$PWD" --check verify
-test -s ".ccid/results/verify.jsonl"
+"$CCID_BIN" cached --repo "$PWD" --check verify; test -s ".ccid/results/verify.jsonl"'
