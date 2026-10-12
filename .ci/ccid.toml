@@ -21,7 +21,7 @@ commands = [["bash", ".ci/resolve-dependencies.sh"]]
 cache_outputs = ["Cargo.lock"]
 
 [render]
-tool_revision = "53c129c2efa3b9279d2ecbc237d15acdfb656d8c"
+tool_revision = "e38f347d6941aa105ac4b55a0d4b8fec2ef22433"
 
 [jobs.verify]
 scheduler = "crow"
