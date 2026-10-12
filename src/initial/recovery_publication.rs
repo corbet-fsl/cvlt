@@ -192,7 +192,7 @@ impl<B: Backend> InitialCreation<B> {
                 return Err(InitialError::Invalid);
             }
         }
-        if expected.state() != &recovery.state {
+        if !same_state(expected.state(), &recovery.state) {
             return Err(InitialError::Invalid);
         }
         let outputs = self.store.load_pending().map_err(InitialError::Storage)?;
@@ -254,4 +254,28 @@ impl Recovery {
             })
             .collect()
     }
+}
+
+/// Compare retained client state with the state rebuilt from the retained wire
+/// pairs. Decoding a pair records the original upstream blob on each value
+/// while the locally created state carries none; the blob only repeats the
+/// signed wire bytes already compared through the retained pair, so it is
+/// ignored here and every other field must match exactly.
+fn same_state(left: &cdht::ClientState, right: &cdht::ClientState) -> bool {
+    fn plain(state: &cdht::ClientState) -> Option<serde_json::Value> {
+        fn strip(value: &mut serde_json::Value) {
+            match value {
+                serde_json::Value::Object(map) => {
+                    map.remove("blob");
+                    map.values_mut().for_each(strip);
+                }
+                serde_json::Value::Array(items) => items.iter_mut().for_each(strip),
+                _ => {}
+            }
+        }
+        let mut value = serde_json::to_value(state).ok()?;
+        strip(&mut value);
+        Some(value)
+    }
+    matches!((plain(left), plain(right)), (Some(a), Some(b)) if a == b)
 }
