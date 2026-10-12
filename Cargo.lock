@@ -2005,7 +2005,7 @@ dependencies = [
 [[package]]
 name = "cwlt"
 version = "0.0.0"
-source = "git+https://git.corbet.ch/corbet-foss/cwlt?branch=main#8e09674ba8eae49caa73fd11bfe22ef1e34efcfe"
+source = "git+https://git.corbet.ch/corbet-foss/cwlt?branch=main#8c2f2a24cde51565852d661fc3e96dab8da761bc"
 dependencies = [
  "blake3",
  "ckmg",
@@ -2020,7 +2020,7 @@ dependencies = [
 [[package]]
 name = "cwlt-engine"
 version = "0.0.0"
-source = "git+https://git.corbet.ch/corbet-foss/cwlt?branch=main#8e09674ba8eae49caa73fd11bfe22ef1e34efcfe"
+source = "git+https://git.corbet.ch/corbet-foss/cwlt?branch=main#8c2f2a24cde51565852d661fc3e96dab8da761bc"
 dependencies = [
  "chacha20poly1305 0.11.0",
  "czkp",
