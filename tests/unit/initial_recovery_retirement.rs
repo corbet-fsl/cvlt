@@ -196,10 +196,9 @@ shared!(
                 .await
                 .unwrap();
         }
-        let quorum = cdht::NetworkBackend::new(transport, crate::records::tor::Verifier)
-            .read(&descriptor.key(), queued.subkey)
-            .await
-            .unwrap();
+        let reader = cdht::NetworkBackend::new(transport, crate::records::tor::Verifier);
+        cdht::Backend::create(&reader, &descriptor).await.unwrap();
+        let quorum = reader.read(&descriptor.key(), queued.subkey).await.unwrap();
         assert!(quorum.has_consensus());
         assert_eq!(quorum.value.as_ref(), Some(&newest));
         cached
