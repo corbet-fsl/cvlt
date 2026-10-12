@@ -11,4 +11,6 @@ pkgs.mkShell {
   nativeBuildInputs = with pkgs; [
     pkg-config
   ];
+  # Test binaries link openssl and dbus dynamically without a runtime path.
+  LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.openssl pkgs.dbus ];
 }
