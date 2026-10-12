@@ -317,11 +317,12 @@ shared!(
         assert_eq!(backend.writes.get(), 2);
         assert!(transport.core.gets.get() > before_reads);
         assert_common(&backend.inner, &mut key, &keys, &expected, &mut member).await;
-        let mut current = member.0.current.borrow_mut();
-        let candidate = retired
-            .prepare_recovery(current.current(10).unwrap(), "original", 10)
-            .unwrap();
-        drop(current);
+        let candidate = {
+            let mut current = member.0.current.borrow_mut();
+            retired
+                .prepare_recovery(current.current(10).unwrap(), "original", 10)
+                .unwrap()
+        };
         let prepared = candidate
             .authorize(&mut TestClock(10), &mut member)
             .await
@@ -494,7 +495,7 @@ shared!(
             .store
             .load_pending()
             .unwrap()
-            .into_iter()
+            .iter()
             .filter(|o| o.id[0] == 3)
         {
             let pair: serde_json::Value = serde_json::from_slice(&output.bytes).unwrap();
@@ -672,7 +673,7 @@ shared!(
             .store
             .load_pending()
             .unwrap()
-            .into_iter()
+            .iter()
             .map(|o| (o.id, o.bytes.clone()))
             .collect();
         let backend = RetirementBackend::new(&destination);
@@ -693,7 +694,7 @@ shared!(
             .store
             .load_pending()
             .unwrap()
-            .into_iter()
+            .iter()
             .map(|o| (o.id, o.bytes.clone()))
             .collect();
         assert_eq!(after, outbox);

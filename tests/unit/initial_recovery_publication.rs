@@ -94,7 +94,7 @@ async fn fixture_place_outputs(initial: &InitialCreation<Destination>, network: 
         .store
         .load_pending()
         .unwrap()
-        .into_iter()
+        .iter()
         .filter(|o| o.id[0] == 3)
     {
         let pair: serde_json::Value = serde_json::from_slice(&output.bytes).unwrap();
