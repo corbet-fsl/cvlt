@@ -614,13 +614,8 @@ fn current_lineage_selects_only_fresh_unrevoked_evidence_for_the_asked_binding()
         Err(CurrentError::Stale)
     );
     // A revoked passkey is present, negative evidence: Refused, not Stale.
-    let mut revoking = charter(
-        SCOPE,
-        &mut signer,
-        &[fixture.assertion.credential_id.clone()],
-        &[],
-        true,
-    );
+    let credential = fixture.assertion.credential_id.clone();
+    let mut revoking = charter(SCOPE, &mut signer, &[credential], &[], true);
     let revoked = revoking.current(NOW).unwrap();
     assert_eq!(
         current_lineage(evidence, revoked, &binding, NOW),
