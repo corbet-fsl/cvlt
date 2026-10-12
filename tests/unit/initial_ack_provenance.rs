@@ -62,12 +62,14 @@ shared!(
             )
             .await
             .unwrap();
-        assert!(matches!(
-            initial
-                .acknowledged_recovery(&mut TestClock(10), &mut authority)
-                .await,
-            Err(InitialError::Storage(cwst::Error::Corrupt))
-        ));
+        let refused = initial
+            .acknowledged_recovery(&mut TestClock(10), &mut authority)
+            .await;
+        assert!(
+            matches!(refused, Err(InitialError::Storage(cwst::Error::Corrupt))),
+            "{:?}",
+            refused.map(|_| ())
+        );
     }
 );
 

@@ -159,10 +159,9 @@ shared!(
                 .await
                 .unwrap();
         }
-        let quorum = cdht::NetworkBackend::new(transport.clone(), crate::records::tor::Verifier)
-            .read(&descriptor.key(), queued.subkey)
-            .await
-            .unwrap();
+        let reader = cdht::NetworkBackend::new(transport.clone(), crate::records::tor::Verifier);
+        cdht::Backend::create(&reader, &descriptor).await.unwrap();
+        let quorum = reader.read(&descriptor.key(), queued.subkey).await.unwrap();
         assert!(quorum.has_consensus());
         assert_eq!(quorum.value.as_ref(), Some(&higher));
         let mut cached = cdht::Dht::with_state(
@@ -1343,10 +1342,9 @@ shared!(
                 node.create(&descriptor).await.unwrap();
                 node.set(&descriptor.key(), subkey, &extra).await.unwrap();
             }
-            let actual = cdht::NetworkBackend::new(extra_route, crate::records::tor::Verifier)
-                .read(&descriptor.key(), subkey)
-                .await
-                .unwrap();
+            let reader = cdht::NetworkBackend::new(extra_route, crate::records::tor::Verifier);
+            cdht::Backend::create(&reader, &descriptor).await.unwrap();
+            let actual = reader.read(&descriptor.key(), subkey).await.unwrap();
             assert!(actual.has_consensus());
             assert_eq!(actual.value.as_ref(), Some(&extra));
             let local = cdht::LocalBackend::new(crate::records::tor::Verifier);
