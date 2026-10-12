@@ -563,5 +563,70 @@ fn public_evidence_roundtrip_uses_original_challenge_and_deterministic_keys_hash
     assert!(left.compare_conflict(&right, NOW + 500).is_err());
 }
 
+#[test]
+fn current_lineage_selects_only_fresh_unrevoked_evidence_for_the_asked_binding() {
+    use cvlt::{CurrentError, current_lineage};
+    let fixture = fixture();
+    let mut signer = signer();
+    let mut owner = charter(SCOPE, &mut signer, &[], &[], true);
+    let current = owner.current(NOW).unwrap();
+    let prepared = cvlt::LineageEvidence::prepare(
+        current,
+        &fixture.receipt,
+        &fixture.assertion,
+        &fixture.certificate,
+        MEMBER,
+        NOW,
+    )
+    .unwrap();
+    let evidence = std::slice::from_ref(prepared.evidence());
+    let binding = Binding::new(SCOPE, MEMBER).unwrap();
+    let lineage = current_lineage(evidence, current, &binding, NOW).unwrap();
+    assert_eq!(&lineage, fixture.receipt.attested_lineage().unwrap().0);
+    // Duplicate valid evidence is a tie, still the same lineage.
+    let again =
+        cvlt::LineageEvidence::from_bytes(&prepared.evidence().to_bytes().unwrap()).unwrap();
+    let twice = [
+        again,
+        cvlt::LineageEvidence::from_bytes(&prepared.evidence().to_bytes().unwrap()).unwrap(),
+    ];
+    assert_eq!(
+        current_lineage(&twice, current, &binding, NOW).unwrap(),
+        lineage
+    );
+    assert_eq!(
+        current_lineage(&[], current, &binding, NOW),
+        Err(CurrentError::Missing)
+    );
+    let other = Binding::new(SCOPE, "someone-else").unwrap();
+    assert_eq!(
+        current_lineage(evidence, current, &other, NOW),
+        Err(CurrentError::Refused)
+    );
+    let foreign = Binding::new("other-scope", MEMBER).unwrap();
+    assert_eq!(
+        current_lineage(evidence, current, &foreign, NOW),
+        Err(CurrentError::Refused)
+    );
+    // At and beyond the exclusive validity bound the answer is Stale.
+    assert_eq!(
+        current_lineage(evidence, current, &binding, NOW + 500),
+        Err(CurrentError::Stale)
+    );
+    // A revoked passkey is present, negative evidence: Refused, not Stale.
+    let mut revoking = charter(
+        SCOPE,
+        &mut signer,
+        &[fixture.assertion.credential_id.clone()],
+        &[],
+        true,
+    );
+    let revoked = revoking.current(NOW).unwrap();
+    assert_eq!(
+        current_lineage(evidence, revoked, &binding, NOW),
+        Err(CurrentError::Refused)
+    );
+}
+
 #[path = "cases/lineage_records.rs"]
 mod lineage_records;

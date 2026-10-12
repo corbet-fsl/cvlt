@@ -114,6 +114,64 @@ impl std::fmt::Debug for VerifiedLineageObservation<'_> {
     }
 }
 
+/// Why no current lineage could be selected from forced-read evidence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CurrentError {
+    /// No evidence was read.
+    Missing,
+    /// Evidence or the current Charter is beyond its validity or not fresh.
+    Stale,
+    /// Present evidence is invalid, revoked, for another binding or unordered.
+    Refused,
+}
+
+/// Select the current lineage of `binding` from completed forced-read evidence
+/// against the borrowed current Charter: every item is reverified, concurrent
+/// valid lineages resolve by greater epoch then smaller digest, and one invalid
+/// item refuses the whole read. Nothing partial or expired is ever returned.
+pub fn current_lineage(
+    evidence: &[crate::LineageEvidence],
+    charter: &VerifiedCharter,
+    binding: &ckmg::Binding,
+    now: u64,
+) -> Result<Lineage, CurrentError> {
+    let classify = |error: LineageError| match error {
+        LineageError::Clock
+        | LineageError::Policy(
+            cchr::Error::Expired | cchr::Error::Unavailable | cchr::Error::ClockRegression,
+        ) => CurrentError::Stale,
+        _ => CurrentError::Refused,
+    };
+    if charter.community() != binding.community() {
+        return Err(CurrentError::Refused);
+    }
+    let mut selected: Option<VerifiedLineageObservation<'_>> = None;
+    for item in evidence {
+        let candidate = item
+            .verify(charter, binding.member(), now)
+            .map_err(classify)?;
+        let wins = match &selected {
+            None => true,
+            Some(previous) => candidate
+                .compare_conflict(previous, now)
+                .map_err(classify)?
+                .is_gt(),
+        };
+        if wins {
+            selected = Some(candidate);
+        }
+    }
+    let selected = selected.ok_or(CurrentError::Missing)?;
+    if now >= selected.valid_until().min(charter.valid_until()) {
+        return Err(CurrentError::Stale);
+    }
+    let lineage = selected.lineage(now).map_err(classify)?;
+    if &lineage.binding != binding {
+        return Err(CurrentError::Refused);
+    }
+    Ok(lineage.clone())
+}
+
 /// Verify existing owner evidence without adding a crypto transcript or wire format.
 /// `current` must be borrowed from the actual current Charter/Envoy owner at this
 /// point of use. A caller-supplied key ring, descriptor or currentness flag cannot

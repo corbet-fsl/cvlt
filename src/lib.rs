@@ -22,7 +22,8 @@ pub use initial::{
     RetiredInitial, UnenrolledInitial,
 };
 pub use lineage::{
-    LineageError, LineageRead, LineageRecords, VerifiedLineageObservation, verify_lineage,
+    CurrentError, LineageError, LineageRead, LineageRecords, VerifiedLineageObservation,
+    current_lineage, verify_lineage,
 };
 pub use records::{
     PasskeyRecords, RecordCheckpoint, RecordError, TorLineageRecord, TorPasskeyRecord,
