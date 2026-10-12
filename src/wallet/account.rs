@@ -276,17 +276,41 @@ mod pending {
         AcceptedAccount, AcceptedResponse, PendingGenesisBinding, ResponseTrust,
     };
     use cwlt::account_owner::{
-        AccountGenesisProof, ActivatedAccount, PendingActivation, ReopenedPending,
+        AccountGenesisProof, ActivatedAccount, GenesisRequestMaterial, PendingActivation,
+        ReopenedPending,
     };
 
     impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
         Vault<B, C, E, A, R, CommunityAccountCustody>
     {
-        /// Commit state A and the exact signed outbox in ONE Store commit. The
-        /// proof is consumed; every later step reopens from the durable row.
+        /// Borrow the verified public request data of a proven candidate after
+        /// the same Keys and Store checks. It borrows only the proof.
+        pub async fn community_genesis_material<'proof>(
+            &mut self,
+            proof: &'proof AccountGenesisProof,
+            context: &ckmg::wallet_engine::account::GenesisContext,
+            now: u64,
+        ) -> Result<GenesisRequestMaterial<'proof>, WalletRestoreError> {
+            let storage = self.storage.clone();
+            let store = storage.lock().await;
+            let scope = self.account_scope(&store).await?;
+            let engine = self
+                .keys
+                .wallet_engine()
+                .await
+                .map_err(WalletRestoreError::Keys)?;
+            let material = proof
+                .request_material(&self.wallet.account, &engine, &store, context, now)
+                .map_err(WalletRestoreError::Account)?;
+            self.same_scope(&scope).await?;
+            Ok(material)
+        }
+
+        /// Commit state A and the exact signed outbox in ONE Store commit. A
+        /// pending row is never replaced; every later step reopens from it.
         pub async fn stage_pending_genesis(
             &mut self,
-            proof: AccountGenesisProof,
+            proof: &AccountGenesisProof,
             binding: &PendingGenesisBinding,
             outbox: Vec<u8>,
             operation: [u8; 32],
