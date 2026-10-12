@@ -266,6 +266,215 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
     }
 }
 
+#[cfg(all(feature = "wallet-native-prover", not(target_arch = "wasm32")))]
+mod pending {
+    //! Durable pending companion and accepted account under original Keys
+    //! authority. The same discipline as genesis preparation: Keys before and
+    //! after every Store operation, the Store lock held across it.
+    use super::*;
+    use ckmg::wallet_engine::account::{
+        AcceptedAccount, AcceptedResponse, PendingGenesisBinding, ResponseTrust,
+    };
+    use cwlt::account_owner::{
+        AccountGenesisProof, ActivatedAccount, PendingActivation, ReopenedPending,
+    };
+
+    impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
+        Vault<B, C, E, A, R, CommunityAccountCustody>
+    {
+        /// Commit state A and the exact signed outbox in ONE Store commit. The
+        /// proof is consumed; every later step reopens from the durable row.
+        pub async fn stage_pending_genesis(
+            &mut self,
+            proof: AccountGenesisProof,
+            binding: &PendingGenesisBinding,
+            outbox: Vec<u8>,
+            operation: [u8; 32],
+            now: u64,
+        ) -> Result<(), WalletRestoreError> {
+            let storage = self.storage.clone();
+            let mut store = storage.lock().await;
+            let scope = self.account_scope(&store).await?;
+            let engine = self
+                .keys
+                .wallet_engine()
+                .await
+                .map_err(WalletRestoreError::Keys)?;
+            proof
+                .stage_pending(
+                    &self.wallet.account,
+                    &engine,
+                    &mut store,
+                    binding,
+                    outbox,
+                    operation,
+                    now,
+                )
+                .await
+                .map_err(WalletRestoreError::Account)?;
+            self.same_scope(&scope).await
+        }
+
+        /// Reopen the durable pending companion (state A or B) with its exact outbox.
+        pub async fn reopen_pending_genesis(
+            &mut self,
+            now: u64,
+        ) -> Result<ReopenedPending, WalletRestoreError> {
+            let storage = self.storage.clone();
+            let store = storage.lock().await;
+            let scope = self.account_scope(&store).await?;
+            let engine = self
+                .keys
+                .wallet_engine()
+                .await
+                .map_err(WalletRestoreError::Keys)?;
+            let reopened = self
+                .wallet
+                .account
+                .reopen_pending(&engine, &store, now)
+                .map_err(WalletRestoreError::Account)?;
+            self.same_scope(&scope).await?;
+            Ok(reopened)
+        }
+
+        /// Move state A to state B after the actual response arrived.
+        pub async fn advance_pending_genesis(
+            &mut self,
+            response: &AcceptedResponse,
+            trust: &ResponseTrust,
+            operation: [u8; 32],
+            now: u64,
+        ) -> Result<(), WalletRestoreError> {
+            let storage = self.storage.clone();
+            let mut store = storage.lock().await;
+            let scope = self.account_scope(&store).await?;
+            let engine = self
+                .keys
+                .wallet_engine()
+                .await
+                .map_err(WalletRestoreError::Keys)?;
+            self.wallet
+                .account
+                .advance_pending(&engine, &mut store, response, trust, operation, now)
+                .await
+                .map_err(WalletRestoreError::Account)?;
+            self.same_scope(&scope).await
+        }
+
+        /// Reopen state B and re-verify the stored response under the CURRENT trust.
+        pub async fn begin_account_activation(
+            &mut self,
+            trust: &ResponseTrust,
+            now: u64,
+        ) -> Result<PendingActivation, WalletRestoreError> {
+            let storage = self.storage.clone();
+            let store = storage.lock().await;
+            let scope = self.account_scope(&store).await?;
+            let engine = self
+                .keys
+                .wallet_engine()
+                .await
+                .map_err(WalletRestoreError::Keys)?;
+            let activation = self
+                .wallet
+                .account
+                .begin_activation(&engine, &store, trust, now)
+                .map_err(WalletRestoreError::Account)?;
+            self.same_scope(&scope).await?;
+            Ok(activation)
+        }
+
+        /// Replace the unchanged pending row with the accepted account record.
+        pub async fn commit_account_activation(
+            &mut self,
+            activation: PendingActivation,
+            operation: [u8; 32],
+            acknowledgement: [u8; 32],
+        ) -> Result<ActivatedAccount, WalletRestoreError> {
+            let storage = self.storage.clone();
+            let mut store = storage.lock().await;
+            let scope = self.account_scope(&store).await?;
+            let activated = activation
+                .commit(&self.wallet.account, &mut store, operation, acknowledgement)
+                .await
+                .map_err(WalletRestoreError::Account)?;
+            self.same_scope(&scope).await?;
+            Ok(activated)
+        }
+
+        /// Acknowledge the outbox of an already accepted account (repeatable).
+        pub async fn settle_account_outbox(
+            &mut self,
+            operation: [u8; 32],
+        ) -> Result<bool, WalletRestoreError> {
+            let storage = self.storage.clone();
+            let mut store = storage.lock().await;
+            let scope = self.account_scope(&store).await?;
+            let settled = self
+                .wallet
+                .account
+                .settle_outbox(&mut store, operation)
+                .await
+                .map_err(WalletRestoreError::Account)?;
+            self.same_scope(&scope).await?;
+            Ok(settled)
+        }
+
+        /// Reopen the accepted account record under a fresh engine.
+        pub async fn restore_accepted_account(
+            &mut self,
+        ) -> Result<AcceptedAccount, WalletRestoreError> {
+            let storage = self.storage.clone();
+            let store = storage.lock().await;
+            let scope = self.account_scope(&store).await?;
+            let engine = self
+                .keys
+                .wallet_engine()
+                .await
+                .map_err(WalletRestoreError::Keys)?;
+            let accepted = self
+                .wallet
+                .account
+                .restore_accepted(&engine, &store)
+                .map_err(WalletRestoreError::Account)?;
+            self.same_scope(&scope).await?;
+            Ok(accepted)
+        }
+
+        /// The community binding of the original Keys lineage, which must be a
+        /// community scope of the locked Store (never the global wallet).
+        async fn account_scope(
+            &mut self,
+            store: &cwst::Store<B>,
+        ) -> Result<ckmg::Binding, WalletRestoreError> {
+            let binding = self
+                .keys
+                .lineage()
+                .await
+                .map_err(WalletRestoreError::Keys)?
+                .binding;
+            if binding.community() == "wallet" || !store.is_scope(binding.community()) {
+                return Err(WalletRestoreError::Scope);
+            }
+            Ok(binding)
+        }
+
+        /// Original Keys still authorize the same lineage after the Store work.
+        async fn same_scope(&mut self, binding: &ckmg::Binding) -> Result<(), WalletRestoreError> {
+            let after = self
+                .keys
+                .lineage()
+                .await
+                .map_err(WalletRestoreError::Keys)?
+                .binding;
+            if &after != binding {
+                return Err(WalletRestoreError::Scope);
+            }
+            Ok(())
+        }
+    }
+}
+
 struct GenesisCheck<'owner> {
     candidate: &'owner cwlt::account_owner::AccountGenesis,
     completed: bool,
