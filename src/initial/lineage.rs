@@ -99,19 +99,19 @@ impl<B: Backend> InitialCreation<B> {
             .read(&key, 0)
             .await
             .map_err(InitialError::Publication)?;
-        if let Some(observed) = &report.value {
-            if observed != &value {
-                let state = self.staged_state()?;
-                let mut client = cdht::Dht::with_state(records, Verifier, state.clone());
-                if client.state() != &state {
-                    return Err(InitialError::Invalid);
-                }
-                client
-                    .observe_original(&key, 0, observed)
-                    .map_err(InitialError::Publication)?;
-                self.retain_conflict(client.state()).await?;
-                return Err(InitialError::Publication(cdht::Error::Conflict));
+        if let Some(observed) = &report.value
+            && observed != &value
+        {
+            let state = self.staged_state()?;
+            let mut client = cdht::Dht::with_state(records, Verifier, state.clone());
+            if client.state() != &state {
+                return Err(InitialError::Invalid);
             }
+            client
+                .observe_original(&key, 0, observed)
+                .map_err(InitialError::Publication)?;
+            self.retain_conflict(client.state()).await?;
+            return Err(InitialError::Publication(cdht::Error::Conflict));
         }
         if !report.has_consensus() || report.value.as_ref() != Some(&value) {
             return Err(InitialError::Records(crate::RecordError::Unavailable));
