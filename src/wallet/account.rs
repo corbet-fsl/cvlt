@@ -533,7 +533,10 @@ pub(crate) async fn prepare_initial_account<B: Backend, C: Clock, E: Entropy, A:
     {
         return Err(InitialError::Invalid);
     }
-    let engine = keys.wallet_engine().await.map_err(InitialError::Keys)?;
+    let engine = keys
+        .wallet_engine_for_pending_creation(receipt)
+        .await
+        .map_err(InitialError::Keys)?;
     let store = storage.lock().await;
     if store.version().map_err(InitialError::Storage)? != 1 {
         return Err(InitialError::Invalid);

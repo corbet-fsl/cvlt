@@ -184,7 +184,7 @@ pub(crate) async fn prepare_initial_passport<
         return Err(InitialError::Invalid);
     }
     let holder = keys
-        .with_holder_seed(cwlt::PassportHolder::from_holder_seed)
+        .with_holder_seed_for_pending_creation(receipt, cwlt::PassportHolder::from_holder_seed)
         .await
         .map_err(InitialError::Keys)?
         .map_err(InitialError::Keys)?;
