@@ -2,6 +2,7 @@
 //! It never duplicates their lineage, record, proof or accepted-state logic.
 #![forbid(unsafe_code)]
 mod compound;
+mod credential;
 mod existing;
 mod initial;
 mod lineage;
@@ -14,6 +15,7 @@ pub use compound::{
     CHECKPOINT_SUBKEYS, CheckpointError, CheckpointPublication, CompoundRecords,
     MAX_CHECKPOINT_RECORDS, MAX_PACKED_CHECKPOINT, PreparedCheckpoint, RetainedCheckpoint,
 };
+pub use credential::{CredentialError, CredentialWrite, MAX_COMMUNITY_CREDENTIAL_BYTES};
 use cwst::backend::Backend;
 pub use existing::{OpenError, Owners, PreparedOpen, PreparedRecovery, RecoveryCandidate};
 pub use initial::{

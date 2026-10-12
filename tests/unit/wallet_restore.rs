@@ -18,6 +18,8 @@ const NOW: u64 = 1_800_000_000;
 mod account_genesis_tests;
 #[path = "account_restore.rs"]
 mod account_restore_tests;
+#[path = "credential.rs"]
+mod credential_tests;
 
 struct Clock;
 impl ckmg::Clock for Clock {
