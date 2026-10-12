@@ -5,10 +5,12 @@ use cvlt::{LineageEvidence, LineageRecords, RecordError};
 use std::cell::RefCell;
 use zeroize::Zeroizing;
 
+type Slots = Rc<RefCell<Vec<Option<(u32, Vec<u8>)>>>>;
+
 #[derive(Clone)]
 struct Runtime {
     identity: Identity,
-    data: Rc<RefCell<Vec<Option<(u32, Vec<u8>)>>>>,
+    data: Slots,
     calls: Rc<RefCell<Vec<(u32, bool)>>>,
     failed: Rc<Cell<bool>>,
 }

@@ -2,7 +2,6 @@
 //! Nodes are independent validating LocalBackends. Only transport/persistence
 //! faults are inert; strict completion fixtures do not establish live G3.
 use super::*;
-use cdht::Backend as _;
 use cpky::software::{SoftwareAuthenticator, TestConfiguration};
 use serde_json::json;
 

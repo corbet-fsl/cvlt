@@ -174,7 +174,11 @@ impl Enrolling {
             .into_parts();
         let public = serde_json::from_value(public.into_json()).unwrap();
         let authentication = self.server.finish_authentication(pending, &public).unwrap();
-        self.opening = Some(PreparedOpen::new(custody, self.scope).unwrap());
+        let unlock = match custody {
+            cpky::VaultOutcome::Ready(unlock) => unlock,
+            _ => panic!("original fixture PRF must be available"),
+        };
+        self.opening = Some(PreparedOpen::new(unlock, self.scope).unwrap());
         authentication
     }
     async fn reopen(&mut self, destination: Destination) -> crate::UnenrolledInitial<Destination> {

@@ -2,7 +2,6 @@
 //! The scoped checker below verifies original crypto and current Charter; it is
 //! not an HTTPS membership lease or a production G3 adapter.
 use super::*;
-use cdht::Backend as _;
 use std::cell::RefCell;
 
 #[path = "initial_recovery_publication.rs"]

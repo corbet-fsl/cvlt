@@ -1,7 +1,6 @@
 //! Genuine forced winner reads and two distinct original backend CAS boundaries.
 //! Local strict member fixtures retain their explicit non-HTTPS qualification.
 use super::*;
-use cdht::Backend as _;
 
 #[derive(Clone)]
 struct RetirementBackend {
@@ -674,7 +673,7 @@ shared!(
             .load_pending()
             .unwrap()
             .into_iter()
-            .map(|o| (o.id, o.bytes))
+            .map(|o| (o.id, o.bytes.clone()))
             .collect();
         let backend = RetirementBackend::new(&destination);
         drop(a);
@@ -695,7 +694,7 @@ shared!(
             .load_pending()
             .unwrap()
             .into_iter()
-            .map(|o| (o.id, o.bytes))
+            .map(|o| (o.id, o.bytes.clone()))
             .collect();
         assert_eq!(after, outbox);
         assert_eq!(
