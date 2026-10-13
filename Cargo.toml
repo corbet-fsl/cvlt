@@ -25,12 +25,12 @@ native-records = ["ckmg/native-records", "dep:cmsh"]
 cwlt = { git = "https://git.corbet.ch/corbet-foss/cwlt", branch = "main", default-features = false, features = ["passport", "record", "account"], optional = true }
 cchr = { git = "https://git.corbet.ch/corbet-foss/cchr.git", branch = "main" }
 ckyh = { git = "https://git.corbet.ch/corbet-foss/ckyh", branch = "main", default-features = false }
-cprz = { git = "https://git.corbet.ch/corbet-foss/cprz.git", branch = "v01", default-features = false }
-cprz-pad = { git = "https://git.corbet.ch/corbet-foss/cprz.git", branch = "v01" }
-cdht = { git = "https://git.corbet.ch/corbet-foss/cdht.git", branch = "v01" }
+cprz = { git = "https://git.corbet.ch/corbet-foss/cprz.git", branch = "main", default-features = false }
+cprz-pad = { git = "https://git.corbet.ch/corbet-foss/cprz.git", branch = "main" }
+cdht = { git = "https://git.corbet.ch/corbet-foss/cdht.git", branch = "main" }
 cpky = { git = "https://git.corbet.ch/corbet-foss/cpky.git", branch = "main" }
-ckmg = { git = "https://git.corbet.ch/corbet-foss/ckmg.git", branch = "v01" }
-cwst = { git = "https://git.corbet.ch/corbet-foss/cwst.git", branch = "v01" }
+ckmg = { git = "https://git.corbet.ch/corbet-foss/ckmg.git", branch = "main" }
+cwst = { git = "https://git.corbet.ch/corbet-foss/cwst.git", branch = "main" }
 futures = "0.3"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
