@@ -193,7 +193,7 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W> Vault<B, C, 
         Ok(CredentialWrite::Stored)
     }
 
-    async fn credential_binding(
+    pub(crate) async fn credential_binding(
         &mut self,
         store: &cwst::Store<B>,
     ) -> Result<(String, String, [u8; 32]), CredentialError> {
