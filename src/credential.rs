@@ -118,6 +118,38 @@ fn unframe<'a>(
     Ok(credential)
 }
 
+/// The framed credential record to write, or `None` when the identical
+/// credential is already current. Checks the compare-and-swap expectation.
+pub(crate) fn credential_record<B: Backend>(
+    store: &cwst::Store<B>,
+    community: &str,
+    member: &str,
+    device: &[u8; 32],
+    expected: Option<&[u8]>,
+    credential: &[u8],
+) -> Result<Option<Zeroizing<Vec<u8>>>, CredentialError> {
+    if credential.is_empty() || credential.len() > MAX_COMMUNITY_CREDENTIAL_BYTES {
+        return Err(CredentialError::Invalid);
+    }
+    let current = match store
+        .read(OWNER, KEY)
+        .map_err(|_| CredentialError::Storage)?
+    {
+        None => None,
+        Some(record) => Some(unframe(record, community, member, device)?.to_vec()),
+    };
+    if current.as_deref() == Some(credential) {
+        return Ok(None);
+    }
+    if current.as_deref() != expected {
+        return Err(CredentialError::Conflict);
+    }
+    Ok(Some(frame(community, member, device, credential)))
+}
+
+pub(crate) const CREDENTIAL_OWNER: &str = OWNER;
+pub(crate) const CREDENTIAL_KEY: &[u8] = KEY;
+
 impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W> Vault<B, C, E, A, R, W> {
     /// Read the stored community credential for this exact community, member and
     /// current device after fresh Keys Use authority. `None` means no credential
@@ -149,26 +181,14 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W> Vault<B, C, 
         expected: Option<&[u8]>,
         credential: &[u8],
     ) -> Result<CredentialWrite, CredentialError> {
-        if credential.is_empty() || credential.len() > MAX_COMMUNITY_CREDENTIAL_BYTES {
-            return Err(CredentialError::Invalid);
-        }
         let storage = self.storage.clone();
         let mut store = storage.lock().await;
         let (community, member, device) = self.credential_binding(&store).await?;
-        let current = match store
-            .read(OWNER, KEY)
-            .map_err(|_| CredentialError::Storage)?
-        {
-            None => None,
-            Some(record) => Some(unframe(record, &community, &member, &device)?.to_vec()),
-        };
-        if current.as_deref() == Some(credential) {
+        let Some(record) =
+            credential_record(&store, &community, &member, &device, expected, credential)?
+        else {
             return Ok(CredentialWrite::Unchanged);
-        }
-        if current.as_deref() != expected {
-            return Err(CredentialError::Conflict);
-        }
-        let record = frame(&community, &member, &device, credential);
+        };
         let version = store.version().map_err(|_| CredentialError::Storage)?;
         let mut operation =
             blake3::Hasher::new_derive_key("cvlt.community-credential.operation.v1");
@@ -193,7 +213,7 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W> Vault<B, C, 
         Ok(CredentialWrite::Stored)
     }
 
-    async fn credential_binding(
+    pub(crate) async fn credential_binding(
         &mut self,
         store: &cwst::Store<B>,
     ) -> Result<(String, String, [u8; 32]), CredentialError> {

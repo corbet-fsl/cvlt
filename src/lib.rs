@@ -1,6 +1,7 @@
 //! Vault composes Keys, encrypted Storage and injected Records/Wallet owners.
 //! It never duplicates their lineage, record, proof or accepted-state logic.
 #![forbid(unsafe_code)]
+mod community_pin;
 mod compound;
 mod credential;
 mod existing;
@@ -15,6 +16,7 @@ pub use compound::{
     CHECKPOINT_SUBKEYS, CheckpointError, CheckpointPublication, CompoundRecords,
     MAX_CHECKPOINT_RECORDS, MAX_PACKED_CHECKPOINT, PreparedCheckpoint, RetainedCheckpoint,
 };
+pub use community_pin::{CommunityPin, PinnedHead};
 pub use credential::{CredentialError, CredentialWrite, MAX_COMMUNITY_CREDENTIAL_BYTES};
 use cwst::backend::Backend;
 pub use existing::{OpenError, Owners, PreparedOpen, PreparedRecovery, RecoveryCandidate};
