@@ -1,10 +1,43 @@
 //! Vault composes Keys, encrypted Storage and injected Records/Wallet owners.
 //! It never duplicates their lineage, record, proof or accepted-state logic.
 #![forbid(unsafe_code)]
+mod community_pin;
+mod compound;
+mod credential;
+mod existing;
+mod initial;
+mod lineage;
+mod read_floors;
+mod records;
+mod retention;
 mod storage;
+mod voucher_custody;
 use ckmg::{Authority, Clock, Entropy, Locator};
+pub use compound::{
+    CHECKPOINT_SUBKEYS, CheckpointError, CheckpointPublication, CompoundRecords,
+    MAX_CHECKPOINT_RECORDS, MAX_PACKED_CHECKPOINT, PreparedCheckpoint, RetainedCheckpoint,
+};
+pub use community_pin::{CommunityPin, PinnedHead};
+pub use credential::{CredentialError, CredentialWrite, MAX_COMMUNITY_CREDENTIAL_BYTES};
 use cwst::backend::Backend;
+pub use existing::{OpenError, Owners, PreparedOpen, PreparedRecovery, RecoveryCandidate};
+pub use initial::{
+    AcknowledgedInitialCandidate, CurrentInitialLineage, InitialAcknowledgment, InitialCreation,
+    InitialError, InitialLineageRead, InitialPhase, InitialPublication, RetainedGenesis,
+    RetiredInitial, UnenrolledInitial,
+};
+pub use lineage::{
+    LineageError, LineageRead, LineageRecords, VerifiedLineageObservation, verify_lineage,
+};
+pub use records::{
+    PasskeyRecords, RecordCheckpoint, RecordError, TorLineageRecord, TorPasskeyRecord,
+    TorReadRecord,
+};
+pub use retention::{
+    EvidenceError, LineageEvidence, MAX_LINEAGE_EVIDENCE_BYTES, PreparedLineageEvidence,
+};
 pub use storage::*;
+pub use voucher_custody::MAX_VOUCHER_CUSTODY_BYTES;
 
 /// A restore lookup distinguishes authenticated absence from unavailable data.
 /// No lookup outcome authorizes a replacement identity. Equal enrolled passkeys
@@ -28,10 +61,16 @@ impl std::fmt::Debug for RestoreLookup {
 }
 /// Records owns authentication, Veilid format, retention and transport. This port
 /// deliberately carries no raw identity/root key, URL, IP or operator backup path.
-/// No permissive production implementation is supplied before cdht integration.
+/// [`PasskeyRecords`] forwards original authenticated reads without an absence fallback.
 pub trait Records {
     /// Look up the passkey-derived opaque locator with explicit availability semantics.
     fn lookup(&mut self, locator: &Locator) -> impl std::future::Future<Output = RestoreLookup>;
+    /// Install original signed read floors from an authenticated Store before
+    /// further lookups. Adapters without this actual owner capability refuse.
+    /// This establishes only negative read boundaries, never current authority.
+    fn install_read_floors(&mut self, _state: &cdht::ClientState) -> Result<(), RecordError> {
+        Err(RecordError::Unavailable)
+    }
 }
 /// Thin composition; private domain state remains exclusively in its owner.
 /// The Wallet type is supplied by the accounting owner. There is no fake proof engine.
@@ -48,14 +87,22 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W> Vault<B, C, 
     pub fn new(
         store: cwst::Store<B>,
         scope: &str,
-        clock: C,
+        mut clock: C,
         entropy: E,
         authority: A,
-        records: R,
+        mut records: R,
         wallet: W,
     ) -> Result<Self, Error> {
         if !store.is_scope(scope) {
             return Err(Error::Scope);
+        }
+        if let Some(carrier) = read_floors::load(&store).map_err(|_| Error::Invalid)? {
+            if clock.now().map_err(|_| Error::Invalid)? < carrier.checked_at {
+                return Err(Error::Invalid);
+            }
+            records
+                .install_read_floors(&carrier.state)
+                .map_err(|_| Error::Invalid)?;
         }
         let storage = shared_store(store);
         let key_store = KeyStore::new(storage.clone(), scope)?;
@@ -102,3 +149,23 @@ impl<B: Backend, C, E, A, R, W> std::fmt::Debug for Vault<B, C, E, A, R, W> {
         f.write_str("Vault([redacted])")
     }
 }
+
+#[cfg(all(test, target_arch = "wasm32"))]
+wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+// Link the existing profiling runtime into this newly enabled unit test binary.
+#[cfg(all(test, target_arch = "wasm32", owned_browser_coverage))]
+#[wasm_bindgen_test::wasm_bindgen_test]
+fn profiling_runtime_is_linked() {
+    let _ = browser_coverage_runtime::__owned_test_module_signature();
+}
+
+#[cfg(all(feature = "native-records", not(target_arch = "wasm32")))]
+pub use compound::native_checkpoint_record;
+
+#[cfg(feature = "wallet")]
+mod wallet;
+#[cfg(feature = "wallet")]
+pub use wallet::{
+    CommunityAccountCustody, GlobalPassportCustody, WalletCustody, WalletRestoreError,
+};

@@ -47,9 +47,9 @@ durable success. Cancellation, conflicts and unknown outcomes reconcile through
 the owner. Keys' pending receipt remains inside its sealed checkpoint.
 
 Records, Wallet, live G3 authority, equal-passkey root custody and the browser
-iframe ceremony are pending owner integrations. Current Keys dependency behavior
-that derives a privileged identity from PRF does not satisfy this restore contract. No permissive authority or proof engine
-is supplied. The decided custody and restore rules above are requirements, not
+iframe ceremony are pending owner integrations. Opening a local Keys checkpoint
+does not demonstrate equal-passkey custody or restore. No permissive authority or
+proof engine is supplied. The decided custody and restore rules above are requirements, not
 claims that these missing integrations already pass.
 
 See [the contract](docs/CONTRACT.md) and [coverage requirements](docs/COVERAGE.md).
@@ -58,3 +58,22 @@ Independent acceptance review remains required.
 ## License
 
 [Functional Source License, Version 1.1, ALv2 Future License](LICENSE.md).
+
+## Existing checkpoint handover
+
+`Vault::open_existing` consumes the original Passkeys `UnlockSecret` through
+Keys' opaque PRF importer, opens the existing encrypted Store, unlocks its Keys
+checkpoint, then asks Keys to validate current lineage through the supplied
+Authority. `Owners` groups the original Clock, Entropy, Authority, Records and
+Wallet capabilities; it creates none of them. No secret or plaintext key is
+returned. Missing/corrupt/unavailable state refuses without creating a Store,
+root or replacement identity, and the path performs no checkpoint writes.
+Later Keys operations still check their own current authority.
+
+This is a local prerequisite, not production login or restored custody. The real
+live Authority/Records/Wallet composer, DHT restore and successful current-custody
+fixture remain outstanding. Actual Passkeys software-authenticator/Store tests
+exercise refusal after the Store opens correctly, wrong passkeys/scopes,
+corruption, unavailable storage and cancellation. They do not simulate accepted
+G3 authority or a working Wallet. Native/browser execution and full coverage
+remain required.
