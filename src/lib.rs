@@ -13,11 +13,11 @@ mod retention;
 mod storage;
 mod voucher_custody;
 use ckmg::{Authority, Clock, Entropy, Locator};
+pub use community_pin::{CommunityPin, PinnedHead};
 pub use compound::{
     CHECKPOINT_SUBKEYS, CheckpointError, CheckpointPublication, CompoundRecords,
     MAX_CHECKPOINT_RECORDS, MAX_PACKED_CHECKPOINT, PreparedCheckpoint, RetainedCheckpoint,
 };
-pub use community_pin::{CommunityPin, PinnedHead};
 pub use credential::{CredentialError, CredentialWrite, MAX_COMMUNITY_CREDENTIAL_BYTES};
 use cwst::backend::Backend;
 pub use existing::{OpenError, Owners, PreparedOpen, PreparedRecovery, RecoveryCandidate};
@@ -27,7 +27,8 @@ pub use initial::{
     RetiredInitial, UnenrolledInitial,
 };
 pub use lineage::{
-    LineageError, LineageRead, LineageRecords, VerifiedLineageObservation, verify_lineage,
+    LineageError, LineageRead, LineageRecords, VerifiedLineageObservation,
+    publish_lineage_revision, verify_lineage,
 };
 pub use records::{
     PasskeyRecords, RecordCheckpoint, RecordError, TorLineageRecord, TorPasskeyRecord,

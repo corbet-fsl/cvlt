@@ -4,7 +4,9 @@ use ckmg::{Lineage, PublicKey, Receipt};
 use ckyh::lineage::Assertion;
 
 mod records;
+mod revision;
 pub use records::{LineageRead, LineageRecords};
+pub use revision::publish_lineage_revision;
 
 /// Fixed evidence refusal, with no supplied identities, ciphertext or assertions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
