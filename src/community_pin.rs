@@ -157,10 +157,11 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W> Vault<B, C, 
         if current.as_ref() != expected {
             return Err(CredentialError::Conflict);
         }
-        if let Some(current) = &current {
-            if !pin.succeeds(current) {
-                return Err(CredentialError::Conflict);
-            }
+        if current
+            .as_ref()
+            .is_some_and(|current| !pin.succeeds(current))
+        {
+            return Err(CredentialError::Conflict);
         }
         let credential_record = match credential {
             None => None,
