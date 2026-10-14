@@ -7,6 +7,26 @@ pub struct CommunityAccountCustody {
     account: cwlt::account_owner::DurableAccountOwner,
 }
 
+/// A wallet type that carries the community account owner: the dedicated
+/// account custody, or the member Vault's wallet custody when it was restored
+/// with the account capsule. The Vault's single Store stays the only owner.
+pub trait AccountSlot {
+    /// The community account owner, or a scope refusal when none was restored.
+    fn account(&self) -> Result<&cwlt::account_owner::DurableAccountOwner, WalletRestoreError>;
+}
+
+impl AccountSlot for CommunityAccountCustody {
+    fn account(&self) -> Result<&cwlt::account_owner::DurableAccountOwner, WalletRestoreError> {
+        Ok(&self.account)
+    }
+}
+
+impl AccountSlot for WalletCustody {
+    fn account(&self) -> Result<&cwlt::account_owner::DurableAccountOwner, WalletRestoreError> {
+        self.account.as_ref().ok_or(WalletRestoreError::Scope)
+    }
+}
+
 impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, A, R, ()> {
     /// Restore only the existing original community account capsule after normal
     /// Vault recovery. Missing state, foreign binding and global wallet refuse;
@@ -56,8 +76,8 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
     }
 }
 
-impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
-    Vault<B, C, E, A, R, CommunityAccountCustody>
+impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W: AccountSlot>
+    Vault<B, C, E, A, R, W>
 {
     /// Prepare opaque private genesis for the receipt-installed account capsule.
     /// Context and observation are data supplied by the independently current
@@ -86,9 +106,7 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
             .wallet_engine()
             .await
             .map_err(WalletRestoreError::Keys)?;
-        let candidate = self
-            .wallet
-            .account
+        let candidate = self.wallet.account()?
             .prepare_genesis(engine, &store, context.clone(), now)
             .map_err(WalletRestoreError::Account)?;
         // The final original Keys await must precede any candidate return.
@@ -108,7 +126,7 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
             .await
             .map_err(WalletRestoreError::Keys)?;
         candidate
-            .check_current(&self.wallet.account, &fresh, &store, &context, now)
+            .check_current(self.wallet.account()?, &fresh, &store, &context, now)
             .map_err(WalletRestoreError::Account)?;
         Ok(candidate)
     }
@@ -146,7 +164,7 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
             .await
             .map_err(WalletRestoreError::Keys)?;
         candidate
-            .check_current(&self.wallet.account, &engine, &store, context, now)
+            .check_current(self.wallet.account()?, &engine, &store, context, now)
             .map_err(WalletRestoreError::Account)?;
         if self
             .keys
@@ -164,7 +182,7 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
             .await
             .map_err(WalletRestoreError::Keys)?;
         candidate
-            .check_current(&self.wallet.account, &fresh, &store, context, now)
+            .check_current(self.wallet.account()?, &fresh, &store, context, now)
             .map_err(WalletRestoreError::Account)?;
         attempt.completed = true;
         Ok(())
@@ -205,7 +223,7 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
             .await
             .map_err(WalletRestoreError::Keys)?;
         let proof = candidate
-            .prove(&self.wallet.account, &engine, &store, prover, &mut clock)
+            .prove(self.wallet.account()?, &engine, &store, prover, &mut clock)
             .map_err(WalletRestoreError::Account)?;
         // The final original Keys await follows all computation.
         let after = self.keys.lineage().await;
@@ -220,7 +238,7 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
         }
         let now = clock().map_err(|e| WalletRestoreError::Account(e.into()))?;
         proof
-            .check_current(&self.wallet.account, &fresh, &store, context, now)
+            .check_current(self.wallet.account()?, &fresh, &store, context, now)
             .map_err(WalletRestoreError::Account)?;
         Ok(proof)
     }
@@ -247,9 +265,7 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
             .wallet_engine()
             .await
             .map_err(WalletRestoreError::Keys)?;
-        let public = self
-            .wallet
-            .account
+        let public = self.wallet.account()?
             .projection(&engine, &store)
             .map_err(WalletRestoreError::Account)?;
         if self
@@ -280,8 +296,8 @@ mod pending {
         ReopenedPending,
     };
 
-    impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
-        Vault<B, C, E, A, R, CommunityAccountCustody>
+    impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W: AccountSlot>
+        Vault<B, C, E, A, R, W>
     {
         /// Borrow the verified public request data of a proven candidate after
         /// the same Keys and Store checks. It borrows only the proof.
@@ -300,7 +316,7 @@ mod pending {
                 .await
                 .map_err(WalletRestoreError::Keys)?;
             let material = proof
-                .request_material(&self.wallet.account, &engine, &store, context, now)
+                .request_material(self.wallet.account()?, &engine, &store, context, now)
                 .map_err(WalletRestoreError::Account)?;
             self.same_scope(&scope).await?;
             Ok(material)
@@ -326,7 +342,7 @@ mod pending {
                 .map_err(WalletRestoreError::Keys)?;
             proof
                 .stage_pending(
-                    &self.wallet.account,
+                    self.wallet.account()?,
                     &engine,
                     &mut store,
                     binding,
@@ -352,9 +368,7 @@ mod pending {
                 .wallet_engine()
                 .await
                 .map_err(WalletRestoreError::Keys)?;
-            let reopened = self
-                .wallet
-                .account
+            let reopened = self.wallet.account()?
                 .reopen_pending(&engine, &store, now)
                 .map_err(WalletRestoreError::Account)?;
             self.same_scope(&scope).await?;
@@ -377,8 +391,7 @@ mod pending {
                 .wallet_engine()
                 .await
                 .map_err(WalletRestoreError::Keys)?;
-            self.wallet
-                .account
+            self.wallet.account()?
                 .advance_pending(&engine, &mut store, response, trust, operation, now)
                 .await
                 .map_err(WalletRestoreError::Account)?;
@@ -399,9 +412,7 @@ mod pending {
                 .wallet_engine()
                 .await
                 .map_err(WalletRestoreError::Keys)?;
-            let activation = self
-                .wallet
-                .account
+            let activation = self.wallet.account()?
                 .begin_activation(&engine, &store, trust, now)
                 .map_err(WalletRestoreError::Account)?;
             self.same_scope(&scope).await?;
@@ -419,7 +430,7 @@ mod pending {
             let mut store = storage.lock().await;
             let scope = self.account_scope(&store).await?;
             let activated = activation
-                .commit(&self.wallet.account, &mut store, operation, acknowledgement)
+                .commit(self.wallet.account()?, &mut store, operation, acknowledgement)
                 .await
                 .map_err(WalletRestoreError::Account)?;
             self.same_scope(&scope).await?;
@@ -434,9 +445,7 @@ mod pending {
             let storage = self.storage.clone();
             let mut store = storage.lock().await;
             let scope = self.account_scope(&store).await?;
-            let settled = self
-                .wallet
-                .account
+            let settled = self.wallet.account()?
                 .settle_outbox(&mut store, operation)
                 .await
                 .map_err(WalletRestoreError::Account)?;
@@ -456,9 +465,7 @@ mod pending {
                 .wallet_engine()
                 .await
                 .map_err(WalletRestoreError::Keys)?;
-            let accepted = self
-                .wallet
-                .account
+            let accepted = self.wallet.account()?
                 .restore_accepted(&engine, &store)
                 .map_err(WalletRestoreError::Account)?;
             self.same_scope(&scope).await?;
