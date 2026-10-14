@@ -6,7 +6,7 @@ use cwst::{Store, backend::Backend};
 pub(crate) mod global;
 pub use global::GlobalPassportCustody;
 pub(crate) mod account;
-pub use account::CommunityAccountCustody;
+pub use account::{AccountSlot, CommunityAccountCustody};
 
 /// Original durable passport and epoch-record owners. No accepted balance,
 /// external proof runtime, Wave reservation or release is created by restoration.
@@ -14,6 +14,9 @@ pub use account::CommunityAccountCustody;
 pub struct WalletCustody {
     passport: cwlt::passport::DurableHolder,
     record: cwlt::record::DurableRecord,
+    /// The community account capsule, when this community has one. Present so the
+    /// one Vault of a device owns the Store for the account actor too.
+    pub(crate) account: Option<cwlt::account_owner::DurableAccountOwner>,
 }
 
 /// Wallet custody refuses missing owner records and failed authentication.
@@ -71,13 +74,37 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
             .map_err(WalletRestoreError::Passport)?;
         let record = cwlt::record::DurableRecord::open(engine, &store, binding.community())
             .map_err(WalletRestoreError::Record)?;
+        // A member's community has an account capsule once enrolment installed it; the
+        // global wallet and a community not yet enrolled have none.
+        let account = if binding.community() == "wallet" {
+            None
+        } else {
+            let engine = self
+                .keys
+                .wallet_engine()
+                .await
+                .map_err(WalletRestoreError::Keys)?;
+            match cwlt::account_owner::DurableAccountOwner::open(
+                engine,
+                &store,
+                binding.community(),
+            ) {
+                Ok(account) => Some(account),
+                Err(cwlt::account_owner::Error::Conflict) => None,
+                Err(error) => return Err(WalletRestoreError::Account(error)),
+            }
+        };
         drop(store);
         Ok(Vault {
             keys: self.keys,
             storage: self.storage,
             key_store: self.key_store,
             records: self.records,
-            wallet: WalletCustody { passport, record },
+            wallet: WalletCustody {
+                passport,
+                record,
+                account,
+            },
         })
     }
 }
