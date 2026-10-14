@@ -106,6 +106,28 @@ impl PreparedOpen {
         clock: C,
         entropy: E,
     ) -> Result<(PairingRequest, PairingGuest<B, C, E>), OpenError> {
+        self.request_pairing_within(
+            backend,
+            anchor,
+            info,
+            clock,
+            entropy,
+            ckmg::DEFAULT_PAIRING_SECONDS,
+        )
+        .await
+    }
+
+    /// As [`Self::request_pairing`] with the request valid for `lifetime` seconds (the
+    /// community rulebook's pairing window; Keys refuses more than its hard bound).
+    pub async fn request_pairing_within<B: Backend, C: Clock, E: Entropy>(
+        self,
+        backend: B,
+        anchor: &Lineage,
+        info: DeviceInfo,
+        clock: C,
+        entropy: E,
+        lifetime: u64,
+    ) -> Result<(PairingRequest, PairingGuest<B, C, E>), OpenError> {
         if anchor.binding.community() != self.scope {
             return Err(OpenError::Composition(Error::Scope));
         }
@@ -138,7 +160,7 @@ impl PreparedOpen {
             })
             .map_err(OpenError::Composition)?;
         let receipt = keys
-            .request_pairing(&self.prf, anchor, info, &[])
+            .request_pairing_for(&self.prf, anchor, info, &[], lifetime)
             .await
             .map_err(OpenError::Keys)?;
         drop(guard);
