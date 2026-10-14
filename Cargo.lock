@@ -75,7 +75,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "browser-coverage-runtime"
+name = "browser-coverage-runtime-cvlt"
 version = "0.0.0"
 dependencies = [
  "minicov 0.3.9",
@@ -243,7 +243,7 @@ name = "cvlt"
 version = "0.0.0"
 dependencies = [
  "blake3",
- "browser-coverage-runtime",
+ "browser-coverage-runtime-cvlt",
  "ckmg",
  "cwst",
  "futures",
