@@ -13,6 +13,7 @@ mod records;
 mod retention;
 mod storage;
 mod update_outbox;
+mod witness_state;
 mod voucher_custody;
 use ckmg::{Authority, Clock, Entropy, Locator};
 pub use community_pin::{CommunityPin, PinnedHead};
@@ -42,6 +43,7 @@ pub use retention::{
 };
 pub use storage::*;
 pub use update_outbox::MAX_UPDATE_OUTBOX_BYTES;
+pub use witness_state::MAX_WITNESS_STATE_BYTES;
 pub use voucher_custody::MAX_VOUCHER_CUSTODY_BYTES;
 
 /// A restore lookup distinguishes authenticated absence from unavailable data.

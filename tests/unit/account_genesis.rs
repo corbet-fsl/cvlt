@@ -173,7 +173,10 @@ fn public_context(scope: &str) -> GenesisContext {
             change_cost: 1,
             delay: 100,
             batch: 2,
+            standing: ExtensionPolicy::standing_digest(czkp::reference::params()).unwrap(),
         },
+        standing: czkp::reference::params(),
+        bond: None,
         enrollment: Enrollment {
             member: [3; 32],
             key: [0; 64],

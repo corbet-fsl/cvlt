@@ -47,7 +47,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 tempfile = "3"
 
 [dev-dependencies]
-czkp = { git = "https://git.corbet.ch/corbet-foss/czkp", branch = "main" }
+czkp = { git = "https://git.corbet.ch/corbet-foss/czkp", branch = "main", features = ["reference"] }
 ed25519-dalek = { version = "3.0.0", features = ["digest"] }
 csgn = { git = "https://git.corbet.ch/corbet-foss/csgn", branch = "main", default-features = false, features = ["volatile-signer"] }
 cpky = { git = "https://git.corbet.ch/corbet-foss/cpky.git", branch = "main", features = ["test-authenticator"] }
