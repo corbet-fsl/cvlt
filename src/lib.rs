@@ -7,6 +7,7 @@ mod credential;
 mod existing;
 mod initial;
 mod lineage;
+mod pairing_guest;
 mod read_floors;
 mod records;
 mod retention;
@@ -31,6 +32,7 @@ pub use lineage::{
     LineageError, LineageRead, LineageRecords, VerifiedLineageObservation,
     publish_lineage_revision, verify_lineage,
 };
+pub use pairing_guest::{AcceptedPairing, PairingGuest};
 pub use records::{
     PasskeyRecords, RecordCheckpoint, RecordError, TorLineageRecord, TorPasskeyRecord,
     TorReadRecord,

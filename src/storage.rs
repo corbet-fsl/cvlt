@@ -88,6 +88,8 @@ pub struct KeyStore<B: Backend> {
     backing: Rc<futures::lock::Mutex<Backing<B>>>,
     scope: String,
     slot: Rc<RefCell<Slot>>,
+    /// Wrapping for the first write of a pending pairing (no common root exists yet).
+    pending: Option<Rc<ckmg::passkey::StoreCipher>>,
 }
 enum Backing<B: Backend> {
     Initial(B),
@@ -100,6 +102,7 @@ impl<B: Backend> Clone for KeyStore<B> {
             backing: self.backing.clone(),
             scope: self.scope.clone(),
             slot: self.slot.clone(),
+            pending: self.pending.clone(),
         }
     }
 }
@@ -113,6 +116,7 @@ impl<B: Backend> KeyStore<B> {
             backing: Rc::new(futures::lock::Mutex::new(Backing::Ready(storage))),
             scope: scope.into(),
             slot: Rc::new(RefCell::new(Slot::default())),
+            pending: None,
         })
     }
     pub(crate) fn initial(backend: B, scope: &str) -> Result<Self, Error> {
@@ -123,7 +127,20 @@ impl<B: Backend> KeyStore<B> {
             backing: Rc::new(futures::lock::Mutex::new(Backing::Initial(backend))),
             scope: scope.into(),
             slot: Rc::new(RefCell::new(Slot::default())),
+            pending: None,
         })
+    }
+
+    /// An empty destination whose first write is a pending pairing request, wrapped
+    /// under the passkey's own store cipher (the common root arrives only with the grant).
+    pub(crate) fn initial_pairing(
+        backend: B,
+        scope: &str,
+        cipher: ckmg::passkey::StoreCipher,
+    ) -> Result<Self, Error> {
+        let mut store = Self::initial(backend, scope)?;
+        store.pending = Some(Rc::new(cipher));
+        Ok(store)
     }
 
     pub(crate) async fn ready(&self) -> Result<SharedStore<B>, ckmg::Error> {
@@ -177,7 +194,14 @@ impl<B: Backend> KeyStore<B> {
                 };
                 drop(backing);
                 return self
-                    .commit_initial(backend, location, expected, replacement, cipher, batch)
+                    .commit_initial(
+                        backend,
+                        location,
+                        expected,
+                        replacement,
+                        cipher.or(self.pending.as_deref()),
+                        batch,
+                    )
                     .await;
             }
         };
