@@ -11,6 +11,7 @@ mod read_floors;
 mod records;
 mod retention;
 mod storage;
+mod update_outbox;
 mod voucher_custody;
 use ckmg::{Authority, Clock, Entropy, Locator};
 pub use community_pin::{CommunityPin, PinnedHead};
@@ -38,6 +39,7 @@ pub use retention::{
     EvidenceError, LineageEvidence, MAX_LINEAGE_EVIDENCE_BYTES, PreparedLineageEvidence,
 };
 pub use storage::*;
+pub use update_outbox::MAX_UPDATE_OUTBOX_BYTES;
 pub use voucher_custody::MAX_VOUCHER_CUSTODY_BYTES;
 
 /// A restore lookup distinguishes authenticated absence from unavailable data.
