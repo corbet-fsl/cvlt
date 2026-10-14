@@ -63,6 +63,12 @@ impl PreparedLineageEvidence {
     pub fn evidence(&self) -> &LineageEvidence {
         &self.0
     }
+
+    /// The exact packed plaintext that a lineage record value carries (the
+    /// `canonical_evidence` Keys signs a record revision over).
+    pub fn packed(&self) -> Result<zeroize::Zeroizing<Vec<u8>>, crate::RecordError> {
+        self.0.packed()
+    }
 }
 impl std::fmt::Debug for PreparedLineageEvidence {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
