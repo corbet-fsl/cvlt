@@ -10,8 +10,7 @@ pub use records::{LineageRead, LineageRecords};
 pub use revision::publish_lineage_revision;
 pub(crate) use stamp::verify_genesis;
 pub use stamp::{
-    LINEAGE_GENESIS_ACTION, StampKeyPeriod, StampTrust, UNFOUNDED_FINGERPRINT_TAG,
-    lineage_genesis_action, lineage_stamp_scope,
+    LINEAGE_GENESIS_ACTION, StampKeyPeriod, StampTrust, lineage_genesis_action, lineage_stamp_scope,
 };
 
 /// Fixed evidence refusal, with no supplied identities, ciphertext or assertions.

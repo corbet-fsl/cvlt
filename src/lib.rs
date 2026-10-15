@@ -32,8 +32,8 @@ pub use initial::{
 };
 pub use lineage::{
     LINEAGE_GENESIS_ACTION, LineageError, LineageRead, LineageRecords, StampKeyPeriod, StampTrust,
-    UNFOUNDED_FINGERPRINT_TAG, VerifiedLineageObservation, lineage_genesis_action,
-    lineage_stamp_scope, publish_lineage_revision, verify_lineage,
+    VerifiedLineageObservation, lineage_genesis_action, lineage_stamp_scope,
+    publish_lineage_revision, verify_lineage,
 };
 pub use pairing_guest::{AcceptedPairing, PairingGuest};
 pub use records::{

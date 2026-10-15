@@ -14,17 +14,12 @@ use super::LineageError;
 use cchr::VerifiedCharter;
 use ckmg::{Change, Lineage, PublicKey, Receipt};
 use cpsd::{
-    ActionKind, CommunityFingerprint, CommunityId, PayloadDigest, StampAction, StampParams,
-    StampPresentation, StampPublicKey, StampSalt, StampScope, verify_stamp,
+    ActionKind, CommunityId, PayloadDigest, StampAction, StampParams, StampPresentation,
+    StampPublicKey, StampSalt, StampScope, verify_stamp,
 };
-use sha2::{Digest as _, Sha256};
 
 /// Stamp action kind of a member's first community lineage.
 pub const LINEAGE_GENESIS_ACTION: &str = "lineage_genesis";
-
-/// Domain of the fingerprint of a community that has no founding document. It must equal the
-/// community server's (`cvld::device_session::UNFOUNDED_FINGERPRINT_TAG`).
-pub const UNFOUNDED_FINGERPRINT_TAG: &[u8] = b"cvld.stamp.unfounded-community.v1\0";
 
 const PAYLOAD_CONTEXT: &str = "cvlt 2026-10-15 lineage genesis stamp v1";
 
@@ -93,24 +88,12 @@ impl StampTrust {
     }
 }
 
-/// The stamp scope of the community `current` verifies: its id and its founding fingerprint
-/// (csgn's genesis fingerprint, the identity the vault pins), or for a charter without one the
-/// tagged id. The device building a stamp request and every verifier use this one derivation.
+/// The stamp scope of the community `current` verifies: `cpsd::StampScope::of_community` over
+/// its id and its community fingerprint (`csgn::community_fingerprint`, the identity the vault
+/// pins). The device building a stamp request, the server and every verifier use this one scope.
 pub fn lineage_stamp_scope(current: &VerifiedCharter) -> Result<StampScope, LineageError> {
     let id = CommunityId::new(current.community()).map_err(|_| LineageError::Scope)?;
-    let fingerprint = match current.fingerprint() {
-        Some(fingerprint) => *fingerprint,
-        None => {
-            let mut hasher = Sha256::new();
-            hasher.update(UNFOUNDED_FINGERPRINT_TAG);
-            hasher.update(current.community().as_bytes());
-            hasher.finalize().into()
-        }
-    };
-    Ok(StampScope::new(
-        id,
-        CommunityFingerprint::from_bytes(fingerprint),
-    ))
+    Ok(StampScope::of_community(id, current.fingerprint()))
 }
 
 /// The `lineage_genesis` action for `receipt` made at `at` with the device's secret `salt`:
