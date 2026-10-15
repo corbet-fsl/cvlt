@@ -10,8 +10,14 @@
 //!                          W || le64(len(c)) || c)
 //! ```
 //!
-//! where `c` is the community scope (the per-community salt of the design: it is
-//! bound into the derivation, so no value crosses communities). `U_c` then plays
+//! where `c` is the community's IDENTITY: the founding-key fingerprint (SHA-256 of
+//! its genesis document) that the vault pins in [`crate::CommunityPin`], never its
+//! address. An address can be taken again after a community ends; a new community
+//! at the same address has another fingerprint, so it derives another `U_c` and
+//! opens nothing of the old one. This is the per-community salt of the design:
+//! bound into the derivation, so no value crosses communities. The vault's Store
+//! scope (the address the Door is configured with) still names the vault and is
+//! bound into its locator by ckmg. `U_c` then plays
 //! the role of a passkey PRF for that community's vault: ckmg derives the
 //! private locator, the Store wrapping key and the device key from it, and the
 //! community's random roots stay wrapped in its own PRF-sealed checkpoint inside
@@ -51,20 +57,27 @@ impl WalletUnlock {
     }
 
     /// One community's vault, without any further passkey ceremony.
-    pub fn community(&self, scope: &str) -> Result<PreparedOpen, OpenError> {
+    /// `fingerprint` is the community's founding-key fingerprint (its identity,
+    /// as pinned in [`crate::CommunityPin::fingerprint`]); `scope` is the vault's
+    /// Store scope (the community address of this membership).
+    pub fn community(
+        &self,
+        fingerprint: &[u8; 32],
+        scope: &str,
+    ) -> Result<PreparedOpen, OpenError> {
         if scope == WALLET_SCOPE {
             return Err(OpenError::Composition(crate::Error::Scope));
         }
-        let secret = community_secret(&self.0, scope);
+        let secret = community_secret(&self.0, fingerprint);
         PreparedOpen::from_prf(secret.as_slice(), scope)
     }
 }
 
-fn community_secret(wallet: &[u8; 32], scope: &str) -> Zeroizing<[u8; 32]> {
+fn community_secret(wallet: &[u8; 32], fingerprint: &[u8; 32]) -> Zeroizing<[u8; 32]> {
     let mut hasher = blake3::Hasher::new_derive_key(COMMUNITY_UNLOCK_CONTEXT);
     hasher.update(wallet);
-    hasher.update(&(scope.len() as u64).to_le_bytes());
-    hasher.update(scope.as_bytes());
+    hasher.update(&(fingerprint.len() as u64).to_le_bytes());
+    hasher.update(fingerprint);
     Zeroizing::new(*hasher.finalize().as_bytes())
 }
 
