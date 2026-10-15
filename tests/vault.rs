@@ -1,6 +1,8 @@
 //! Real encrypted storage composition. Unavailable G3/Records/Wallet stay unavailable.
 #[path = "cases/existing.rs"]
 mod existing;
+#[path = "cases/unlock.rs"]
+mod unlock;
 #[cfg(all(feature = "native-records", not(target_arch = "wasm32")))]
 #[path = "cases/records.rs"]
 mod records;

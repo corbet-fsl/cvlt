@@ -37,7 +37,13 @@ pub(super) async fn passkeys() -> Passkeys {
         },
     )
     .unwrap();
-    let mut client = Client::new(Context::new(ORIGIN, RP).unwrap(), platform);
+    registered(platform).await
+}
+pub(super) fn client(platform: SoftwareAuthenticator) -> Passkeys {
+    Client::new(Context::new(ORIGIN, RP).unwrap(), platform)
+}
+pub(super) async fn registered(platform: SoftwareAuthenticator) -> Passkeys {
+    let mut client = client(platform);
     client.register_member(json!({"publicKey": {
         "rp":{"id":RP,"name":"Synthetic community"},
         "user":{"id":URL_SAFE_NO_PAD.encode([17;16]),"name":"synthetic-member","displayName":"Test member"},
