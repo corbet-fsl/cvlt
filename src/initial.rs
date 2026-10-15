@@ -34,6 +34,7 @@ const ACKNOWLEDGED_INNER: &[u8] = b"acknowledged-common-root-store";
 const ACKNOWLEDGED_KEYS: &[u8] = b"acknowledged-keys";
 const ENROLLMENT: &[u8] = b"unenrolled-candidate";
 const ENROLLMENT_FINISH: &[u8] = b"unenrolled-finish";
+const ENROLLMENT_GENESIS_AT: &[u8] = b"unenrolled-genesis-at";
 const RECOVERY: &[u8] = b"recovery-publication";
 const RECOVERY_PROGRESS: &[u8] = b"recovery-progress";
 const RETIREMENT_SELECTION: &[u8] = b"retirement-selection";
@@ -352,6 +353,13 @@ impl<B: Backend> InitialCreation<B> {
         self.pending.receipt()
     }
 
+    /// The committed creation time of a device-key enrollment (the time its genesis stamp
+    /// binds). A passkey creation has none and refuses.
+    pub fn genesis_at(&self) -> Result<u64, InitialError> {
+        self.phase()?;
+        genesis_at(&self.store)
+    }
+
     /// Authenticate the local phase shape and immutable owner bindings.
     pub fn phase(&self) -> Result<InitialPhase, InitialError> {
         required(&self.store, INNER)?;
@@ -397,8 +405,7 @@ impl<B: Backend> InitialCreation<B> {
             let candidate =
                 ckmg::UnenrolledCreation::reopen(&self.opening.prf, &self.opening.scope, bytes)
                     .map_err(InitialError::Keys)?;
-            if required(&self.store, ENROLLMENT_FINISH)?.is_empty()
-                || !candidate.matches_pending(&self.pending)
+            if enrollment_kind(&self.store)?.is_none() || !candidate.matches_pending(&self.pending)
             {
                 return Err(InitialError::Invalid);
             }
@@ -756,6 +763,46 @@ impl<B: Backend> InitialCreation<B> {
     }
 }
 
+/// How a retained enrollment continues: the passkey path's opaque Foyer finish continuation,
+/// or a device-key enrollment's committed creation time.
+enum Enrollment<'a> {
+    Finish(&'a [u8]),
+    GenesisAt(u64),
+}
+
+/// The enrollment continuation: none without a retained candidate, otherwise exactly one of
+/// a non-empty finish continuation or an eight-byte creation time.
+fn enrollment_kind<B: Backend>(
+    store: &cwst::Store<B>,
+) -> Result<Option<Enrollment<'_>>, InitialError> {
+    let enrolled = store
+        .read(OWNER, ENROLLMENT)
+        .map_err(InitialError::Storage)?
+        .is_some();
+    let finish = store
+        .read(OWNER, ENROLLMENT_FINISH)
+        .map_err(InitialError::Storage)?;
+    let at = store
+        .read(OWNER, ENROLLMENT_GENESIS_AT)
+        .map_err(InitialError::Storage)?;
+    match (enrolled, finish, at) {
+        (false, None, None) => Ok(None),
+        (true, Some(finish), None) if !finish.is_empty() => Ok(Some(Enrollment::Finish(finish))),
+        (true, None, Some(at)) => Ok(Some(Enrollment::GenesisAt(u64::from_le_bytes(
+            at.try_into().map_err(|_| InitialError::Invalid)?,
+        )))),
+        _ => Err(InitialError::Invalid),
+    }
+}
+
+/// The committed creation time of a device-key enrollment; any other store refuses.
+fn genesis_at<B: Backend>(store: &cwst::Store<B>) -> Result<u64, InitialError> {
+    match enrollment_kind(store)? {
+        Some(Enrollment::GenesisAt(at)) => Ok(at),
+        _ => Err(InitialError::Invalid),
+    }
+}
+
 fn initial_operation<B: Backend>(store: &cwst::Store<B>) -> Result<[u8; 32], InitialError> {
     required(store, OPERATION)?
         .try_into()
@@ -767,16 +814,7 @@ fn initial_operation<B: Backend>(store: &cwst::Store<B>) -> Result<[u8; 32], Ini
 // recreate the outer Store to disguise that additional durable transition.
 fn logical_version<B: Backend>(store: &cwst::Store<B>) -> Result<u64, InitialError> {
     let version = store.version().map_err(InitialError::Storage)?;
-    let enrolled = store
-        .read(OWNER, ENROLLMENT)
-        .map_err(InitialError::Storage)?
-        .is_some();
-    let finish = store
-        .read(OWNER, ENROLLMENT_FINISH)
-        .map_err(InitialError::Storage)?;
-    if enrolled != finish.is_some() || finish.is_some_and(<[u8]>::is_empty) {
-        return Err(InitialError::Invalid);
-    }
+    let enrolled = enrollment_kind(store)?.is_some();
     let offset = u64::from(enrolled);
     let raw = version.checked_sub(offset).ok_or(InitialError::Invalid)?;
     recovery_retirement::selected_base(store, raw)

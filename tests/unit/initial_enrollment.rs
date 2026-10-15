@@ -520,6 +520,217 @@ shared!(
     }
 );
 
+/// Activation authority of a device-key member: the candidate's authority reference is the
+/// device key itself (the key `device_join` registered), never a passkey credential.
+struct DeviceOwner {
+    device: ckmg::PublicKey,
+    seed: [u8; 32],
+}
+impl DeviceOwner {
+    fn exact(&self, r: &ckmg::InitialActivationAuthorization<'_>) -> Result<u64, ckmg::Error> {
+        if r.device != self.device
+            || r.authority_reference != self.device.value()
+            || r.seed != &self.seed
+        {
+            return Err(ckmg::Error::Unauthorized);
+        }
+        Ok(30)
+    }
+}
+impl Authority for DeviceOwner {
+    async fn check(&mut self, _: ckmg::Authorization<'_>) -> Result<(), ckmg::Error> {
+        Err(ckmg::Error::Unauthorized)
+    }
+    async fn check_initial_activation(
+        &mut self,
+        r: ckmg::InitialActivationAuthorization<'_>,
+    ) -> Result<u64, ckmg::Error> {
+        self.exact(&r)
+    }
+    fn check_initial_activation_current(
+        &mut self,
+        r: ckmg::InitialActivationAuthorization<'_>,
+    ) -> Result<u64, ckmg::Error> {
+        self.exact(&r)
+    }
+}
+
+shared!(
+    device_enrollment_commits_its_genesis_time_and_signs_only_fixed_purposes_before_activation,
+    {
+        let destination = Destination::new();
+        let prepared = opening(9, "garden");
+        let device = prepared.device().unwrap();
+        let cipher = ckmg::passkey::store_cipher(&prepared.prf, "garden").unwrap();
+        let seed = ckmg::EnrollmentSeed::new(
+            ckmg::Binding::new("garden", "member").unwrap(),
+            &mut ckmg::SystemEntropy,
+        )
+        .unwrap();
+        let commitment = seed.commitment().unwrap();
+        let pending = prepared
+            .retain_device_enrollment(
+                destination.clone(),
+                seed,
+                "phone",
+                &mut TestClock(20),
+                &mut ckmg::SystemEntropy,
+            )
+            .await
+            .unwrap();
+        assert_eq!(pending.commitment().unwrap(), commitment);
+        assert_eq!(pending.genesis_at().unwrap(), 20);
+        // No passkey ceremony: there is no finish continuation to replay.
+        assert_eq!(pending.finish_continuation(), Err(InitialError::Invalid));
+        // One version-1 commit: the candidate and its eight-byte time, nothing else.
+        let outer = cwst::Store::open(destination.memory.clone(), &cipher, "garden")
+            .await
+            .unwrap();
+        assert_eq!(outer.version().unwrap(), 1);
+        assert_eq!(destination.writes.get(), 1);
+        assert_eq!(
+            required(&outer, ENROLLMENT_GENESIS_AT).unwrap(),
+            20u64.to_le_bytes()
+        );
+        assert!(outer.read(OWNER, ENROLLMENT_FINISH).unwrap().is_none());
+        let challenge = pending.passkey_challenge().unwrap();
+        let salt = [5; 32];
+        assert_eq!(
+            pending.lineage_genesis_action(salt).unwrap(),
+            cchr::lineage_genesis_action_for(challenge, salt, 20).unwrap()
+        );
+        let payload = b"garden, challenge, key";
+        let signature = pending
+            .sign_device(ckmg::DevicePurpose::DeviceJoin, payload)
+            .unwrap();
+        let signed = [ckmg::DevicePurpose::DeviceJoin.tag(), &payload[..]].concat();
+        ckmg::verify_ed25519(device.value(), &signed, &signature).unwrap();
+        drop(pending);
+        // A restart rebuilds the same time, challenge and action from durable state.
+        let pending = opening(9, "garden")
+            .reopen_enrollment(destination.clone())
+            .await
+            .unwrap();
+        assert_eq!(pending.genesis_at().unwrap(), 20);
+        assert_eq!(pending.passkey_challenge().unwrap(), challenge);
+        assert_eq!(
+            pending
+                .sign_device(ckmg::DevicePurpose::DeviceJoin, payload)
+                .unwrap(),
+            signature
+        );
+        // Activation keeps the device key as the authority reference and the time.
+        let mut owner = DeviceOwner {
+            device,
+            seed: commitment,
+        };
+        let accepted = pending
+            .activate(&mut TestClock(30), &mut ckmg::SystemEntropy, &mut owner)
+            .await
+            .unwrap();
+        assert_eq!(accepted.phase().unwrap(), InitialPhase::Pending);
+        assert_eq!(accepted.genesis_at().unwrap(), 20);
+        assert_eq!(accepted.receipt().passkey_challenge().unwrap(), challenge);
+        assert_eq!(
+            cchr::lineage_genesis_action(accepted.receipt(), salt, 20).unwrap(),
+            cchr::lineage_genesis_action_for(challenge, salt, 20).unwrap()
+        );
+        drop(accepted);
+        let reopened = opening(9, "garden")
+            .reopen_initial(destination.clone())
+            .await
+            .unwrap();
+        assert_eq!(reopened.genesis_at().unwrap(), 20);
+        assert_eq!(destination.writes.get(), 2);
+    }
+);
+
+shared!(
+    passkey_enrollment_has_no_genesis_time_and_no_device_signer,
+    {
+        let destination = Destination::new();
+        let seed = ckmg::EnrollmentSeed::new(
+            ckmg::Binding::new("garden", "member").unwrap(),
+            &mut ckmg::SystemEntropy,
+        )
+        .unwrap();
+        let pending = opening(9, "garden")
+            .retain_enrollment(
+                destination.clone(),
+                seed,
+                ckmg::DeviceInfo::new("fixture", b"credential").unwrap(),
+                b"finish",
+                &mut TestClock(20),
+                &mut ckmg::SystemEntropy,
+            )
+            .await
+            .unwrap();
+        assert_eq!(pending.finish_continuation().unwrap(), b"finish");
+        assert_eq!(pending.genesis_at(), Err(InitialError::Invalid));
+        assert_eq!(
+            pending.lineage_genesis_action([5; 32]).err(),
+            Some(InitialError::Invalid)
+        );
+        assert_eq!(
+            pending.sign_device(ckmg::DevicePurpose::DeviceSession, b"nonce"),
+            Err(InitialError::Invalid)
+        );
+    }
+);
+
+shared!(
+    enrollment_continuation_is_exactly_one_finish_or_one_genesis_time,
+    {
+        let prf = ckmg::passkey::PrfOutput::from_bytes(&[9; 32]).unwrap();
+        let cipher = ckmg::passkey::store_cipher(&prf, "garden").unwrap();
+        let candidate = &b"candidate"[..];
+        let at = 20u64.to_le_bytes();
+        let cases: [(&[(&[u8], &[u8])], bool); 8] = [
+            (&[], true),
+            (
+                &[(ENROLLMENT, candidate), (ENROLLMENT_FINISH, b"finish")],
+                true,
+            ),
+            (
+                &[(ENROLLMENT, candidate), (ENROLLMENT_GENESIS_AT, &at)],
+                true,
+            ),
+            (&[(ENROLLMENT, candidate)], false),
+            (&[(ENROLLMENT_GENESIS_AT, &at)], false),
+            (
+                &[
+                    (ENROLLMENT, candidate),
+                    (ENROLLMENT_FINISH, b"finish"),
+                    (ENROLLMENT_GENESIS_AT, &at),
+                ],
+                false,
+            ),
+            (&[(ENROLLMENT, candidate), (ENROLLMENT_FINISH, b"")], false),
+            (
+                &[(ENROLLMENT, candidate), (ENROLLMENT_GENESIS_AT, &at[..7])],
+                false,
+            ),
+        ];
+        for (puts, valid) in cases {
+            let mut store = cwst::Store::create(cwst::backend::Memory::new(), &cipher, "garden")
+                .await
+                .unwrap();
+            if !puts.is_empty() {
+                let changes: Vec<_> = puts
+                    .iter()
+                    .map(|(key, value)| cwst::Change::Put {
+                        owner: OWNER,
+                        key,
+                        value,
+                    })
+                    .collect();
+                store.commit(0, [1; 32], &changes, &[]).await.unwrap();
+            }
+            assert_eq!(enrollment_kind(&store).is_ok(), valid);
+        }
+    }
+);
+
 #[path = "initial_ack_provenance.rs"]
 mod acknowledged_provenance_tests;
 

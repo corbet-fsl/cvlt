@@ -37,6 +37,41 @@ impl PreparedOpen {
         let candidate = seed
             .seal(&self.prf, info, clock, entropy)
             .map_err(InitialError::Keys)?;
+        self.retain(backend, candidate, ENROLLMENT_FINISH, finish_continuation)
+            .await
+    }
+
+    /// Retain a device-key member's creation: no passkey ceremony and no finish
+    /// continuation. The candidate's authority reference is this scope's device key (the
+    /// key `device_join` registers), and the creation time `genesis_at` that the genesis
+    /// stamp binds is committed atomically with the candidate, so a restart rebuilds the
+    /// same stamp action. Unknown/cancelled writes require reopening; never a new seed.
+    pub async fn retain_device_enrollment<B: Backend>(
+        self,
+        backend: B,
+        seed: ckmg::EnrollmentSeed,
+        name: &str,
+        clock: &mut impl Clock,
+        entropy: &mut impl Entropy,
+    ) -> Result<UnenrolledInitial<B>, InitialError> {
+        let device = self.device().map_err(InitialError::Open)?;
+        let info = ckmg::DeviceInfo::new(name, device.value()).map_err(InitialError::Keys)?;
+        let candidate = seed
+            .seal(&self.prf, info, clock, entropy)
+            .map_err(InitialError::Keys)?;
+        let at = clock.now().map_err(InitialError::Keys)?;
+        self.retain(backend, candidate, ENROLLMENT_GENESIS_AT, &at.to_le_bytes())
+            .await
+    }
+
+    /// One version-1 commit of the sealed candidate and its continuation (`tail`).
+    async fn retain<B: Backend>(
+        self,
+        backend: B,
+        candidate: ckmg::UnenrolledCreation,
+        tail: &[u8],
+        continuation: &[u8],
+    ) -> Result<UnenrolledInitial<B>, InitialError> {
         // Reopening under this actual scope rejects a caller's different Binding.
         let candidate =
             ckmg::UnenrolledCreation::reopen(&self.prf, &self.scope, candidate.as_bytes())
@@ -60,8 +95,8 @@ impl PreparedOpen {
                     },
                     cwst::Change::Put {
                         owner: OWNER,
-                        key: ENROLLMENT_FINISH,
-                        value: finish_continuation,
+                        key: tail,
+                        value: continuation,
                     },
                 ],
                 &[],
@@ -79,7 +114,8 @@ impl PreparedOpen {
             |store| {
                 if store.operation()? != operation
                     || store.read(OWNER, ENROLLMENT)? != Some(candidate.as_bytes())
-                    || store.read(OWNER, ENROLLMENT_FINISH)? != Some(finish_continuation)
+                    || store.read(OWNER, tail)? != Some(continuation)
+                    || !matches!(enrollment_kind(store), Ok(Some(_)))
                     || !store.load_pending()?.is_empty()
                 {
                     return Err(cwst::Error::Corrupt);
@@ -128,7 +164,7 @@ impl<B: Backend> UnenrolledInitial<B> {
         if self.store.version().map_err(InitialError::Storage)? != 1
             || self.store.operation().map_err(InitialError::Storage)? != self.commitment()?
             || required(&self.store, ENROLLMENT)? != self.candidate.as_bytes()
-            || required(&self.store, ENROLLMENT_FINISH)?.is_empty()
+            || enrollment_kind(&self.store)?.is_none()
             || !self
                 .store
                 .load_pending()
@@ -168,9 +204,53 @@ impl<B: Backend> UnenrolledInitial<B> {
     /// These bytes are data only: the Foyer owner must validate their original
     /// origin, credential, commitment and deadline before retrying the ceremony.
     /// Reading them grants no session, registration or creation authority.
+    /// A device-key enrollment has none and refuses.
     pub fn finish_continuation(&self) -> Result<&[u8], InitialError> {
         self.validate()?;
-        required(&self.store, ENROLLMENT_FINISH)
+        match enrollment_kind(&self.store)? {
+            Some(Enrollment::Finish(finish)) => Ok(finish),
+            _ => Err(InitialError::Invalid),
+        }
+    }
+
+    /// The committed creation time of a device-key enrollment (the time its genesis
+    /// stamp binds). A passkey enrollment has none and refuses.
+    pub fn genesis_at(&self) -> Result<u64, InitialError> {
+        self.validate()?;
+        genesis_at(&self.store)
+    }
+
+    /// The creation receipt's lineage challenge digest, before activation. Public data.
+    pub fn passkey_challenge(&self) -> Result<[u8; 32], InitialError> {
+        self.validate()?;
+        self.candidate
+            .passkey_challenge()
+            .map_err(InitialError::Keys)
+    }
+
+    /// The `lineage_genesis` stamp action of this device-key creation with the device's
+    /// secret `salt`: the same action the published genesis evidence proves after activation.
+    pub fn lineage_genesis_action(
+        &self,
+        salt: [u8; 32],
+    ) -> Result<cpsd::StampAction, InitialError> {
+        cchr::lineage_genesis_action_for(self.passkey_challenge()?, salt, self.genesis_at()?)
+            .map_err(|_| InitialError::Invalid)
+    }
+
+    /// The device key's signature over `payload` for one fixed `purpose` (ckmg prepends the
+    /// purpose's domain tag), the only device signer before activation. Only a validated
+    /// device-key enrollment signs; after activation `Keys` signs.
+    pub fn sign_device(
+        &self,
+        purpose: ckmg::DevicePurpose,
+        payload: &[u8],
+    ) -> Result<[u8; 64], InitialError> {
+        self.validate()?;
+        genesis_at(&self.store)?;
+        self.candidate
+            .sign_device(purpose, payload)
+            .map_err(InitialError::Keys)
     }
 
     /// Opaque original server commitment, recomputed by Keys from private state.
