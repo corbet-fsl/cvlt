@@ -134,6 +134,21 @@ impl AcknowledgedInitialCandidate {
             .reauthorize_initial(current, current_certificate, expected_member, now)
             .map(CurrentInitialLineage)
     }
+    /// The device-key member's twin of [`Self::reauthorize`]: the original genesis evidence
+    /// by stamp verified at NOW against the current Charter and the wallet's authenticated
+    /// stamp trust. The result has no credential (`credential_id` refuses); the caller
+    /// compares its author with the session's device key. Passkey evidence refuses.
+    pub fn reauthorize_with_stamps<'a>(
+        &'a self,
+        current: &'a cchr::VerifiedCharter,
+        stamps: &crate::StampTrust,
+        expected_member: &str,
+        now: u64,
+    ) -> Result<CurrentInitialLineage<'a>, crate::LineageError> {
+        self.evidence
+            .reauthorize_initial_with_stamps(current, stamps, expected_member, now)
+            .map(CurrentInitialLineage)
+    }
     /// Original provisional read admission; no root, signer or Store cipher is
     /// returned, and a caller-supplied timestamp cannot authorize the read.
     pub async fn read_lineage(

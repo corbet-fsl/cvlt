@@ -385,6 +385,22 @@ impl LineageEvidence {
         )
     }
 
+    // The stamp twin of `reauthorize_initial`: genesis evidence by stamp, verified at NOW
+    // against the current Charter and the authenticated stamp trust (judged at the receipt
+    // time). Passkey evidence refuses with `Scope`.
+    pub(crate) fn reauthorize_initial_with_stamps<'a>(
+        &'a self,
+        current: &'a cchr::VerifiedCharter,
+        stamps: &StampTrust,
+        expected_member: &str,
+        now: u64,
+    ) -> Result<VerifiedLineageObservation<'a>, LineageError> {
+        if !self.is_stamp() {
+            return Err(LineageError::Scope);
+        }
+        self.verify_with_stamps(current, stamps, expected_member, now)
+    }
+
     /// Load three original public values from authenticated local Storage. This
     /// grants no currentness: `verify` remains mandatory at every point of use.
     /// An absent triple is None; partial/corrupt triples are refused.
