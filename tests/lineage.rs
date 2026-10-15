@@ -545,6 +545,33 @@ fn public_evidence_roundtrip_uses_original_challenge_and_deterministic_keys_hash
         left.compare_conflict(&right, NOW).unwrap(),
         std::cmp::Ordering::Equal
     );
+    // Passkey evidence verifies unchanged through the stamp-aware entry point, and has no
+    // stamp digest.
+    let params = cpsd::StampParams::new(86_400).unwrap();
+    let stamp_key = cpsd::StampIssuerKey::generate(
+        &mut cpsd::rand::rngs::OsRng,
+        cpsd::KeyId::new("stamp").unwrap(),
+        &params,
+    )
+    .unwrap();
+    let stamps = cvlt::StampTrust::new(
+        vec![cvlt::StampKeyPeriod::new(stamp_key.public_key().clone(), 0, None).unwrap()],
+        params,
+    )
+    .unwrap();
+    assert!(!decoded.is_stamp());
+    let through = decoded
+        .verify_with_stamps(current, &stamps, MEMBER, NOW)
+        .unwrap();
+    assert_eq!(
+        through.credential_id(NOW).unwrap(),
+        fixture.assertion.credential_id
+    );
+    assert_eq!(through.stamp_digest(NOW).unwrap_err(), LineageError::Scope);
+    assert_eq!(
+        left.compare_conflict(&through, NOW).unwrap(),
+        std::cmp::Ordering::Equal
+    );
     let mut malformed = parsed.clone();
     malformed["purpose"] = json!("other");
     assert!(cvlt::LineageEvidence::from_bytes(&serde_json::to_vec(&malformed).unwrap()).is_err());

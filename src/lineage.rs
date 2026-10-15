@@ -5,8 +5,14 @@ use ckyh::lineage::Assertion;
 
 mod records;
 mod revision;
+mod stamp;
 pub use records::{LineageRead, LineageRecords};
 pub use revision::publish_lineage_revision;
+pub(crate) use stamp::verify_genesis;
+pub use stamp::{
+    LINEAGE_GENESIS_ACTION, StampKeyPeriod, StampTrust, UNFOUNDED_FINGERPRINT_TAG,
+    lineage_genesis_action, lineage_stamp_scope,
+};
 
 /// Fixed evidence refusal, with no supplied identities, ciphertext or assertions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,6 +27,9 @@ pub enum LineageError {
     Assertion,
     /// Time precedes the original verification observation.
     Clock,
+    /// The genesis confirmation stamp, its key period or its expiry cohort refused the
+    /// evidence at the receipt's signed time.
+    Stamp,
 }
 impl std::fmt::Display for LineageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -39,10 +48,33 @@ impl std::error::Error for LineageError {}
 /// It must separately apply the original lineage succession/conflict rules.
 pub struct VerifiedLineageObservation<'a> {
     charter: &'a VerifiedCharter,
-    certificate: VerifiedPasskeyCertificate<'a>,
+    authority: Authority<'a>,
     lineage: &'a Lineage,
     author: PublicKey,
     checked_at: u64,
+}
+/// What authorized the receipt: a passkey assertion under the Charter's certificate, or (for a
+/// member's first lineage only) a wallet confirmation stamp under the member's pseudonym.
+enum Authority<'a> {
+    Passkey(VerifiedPasskeyCertificate<'a>),
+    Stamp { digest: [u8; 32] },
+}
+impl<'a> VerifiedLineageObservation<'a> {
+    pub(crate) fn stamped(
+        charter: &'a VerifiedCharter,
+        genesis: stamp::VerifiedGenesis<'a>,
+        now: u64,
+    ) -> Self {
+        Self {
+            charter,
+            authority: Authority::Stamp {
+                digest: genesis.digest,
+            },
+            lineage: genesis.lineage,
+            author: genesis.author,
+            checked_at: now,
+        }
+    }
 }
 impl VerifiedLineageObservation<'_> {
     fn live(&self, now: u64) -> Result<(), LineageError> {
@@ -50,9 +82,20 @@ impl VerifiedLineageObservation<'_> {
             return Err(LineageError::Clock);
         }
         self.charter.settings(now).map_err(LineageError::Policy)?;
-        self.certificate
-            .current(now)
-            .map_err(LineageError::Policy)?;
+        match &self.authority {
+            Authority::Passkey(certificate) => {
+                certificate.current(now).map_err(LineageError::Policy)?
+            }
+            Authority::Stamp { .. } => {
+                if self
+                    .charter
+                    .revocations()
+                    .member_revoked(self.lineage.binding.member())
+                {
+                    return Err(LineageError::Policy(cchr::Error::Unauthenticated));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -69,15 +112,32 @@ impl VerifiedLineageObservation<'_> {
     }
     /// Exact original credential which verified this receipt assertion. This is
     /// public identity within the same current owner cut, never new authority.
+    /// Genesis evidence by stamp has no passkey credential and refuses with `Scope`.
     pub fn credential_id(&self, now: u64) -> Result<&[u8], LineageError> {
         self.live(now)?;
-        self.certificate
-            .credential_id(now)
-            .map_err(LineageError::Policy)
+        match &self.authority {
+            Authority::Passkey(certificate) => {
+                certificate.credential_id(now).map_err(LineageError::Policy)
+            }
+            Authority::Stamp { .. } => Err(LineageError::Scope),
+        }
     }
-    /// Exclusive bound from the original binding and complete Charter lifetimes.
+    /// The one-use digest of the genesis stamp (its action digest), the authority reference of
+    /// stamp evidence. Passkey evidence refuses with `Scope`.
+    pub fn stamp_digest(&self, now: u64) -> Result<[u8; 32], LineageError> {
+        self.live(now)?;
+        match &self.authority {
+            Authority::Passkey(_) => Err(LineageError::Scope),
+            Authority::Stamp { digest } => Ok(*digest),
+        }
+    }
+    /// Exclusive bound from the original binding and complete Charter lifetimes. Stamp evidence
+    /// is bounded by the Charter alone: the stamp's own expiry was judged at the receipt time.
     pub fn valid_until(&self) -> u64 {
-        self.certificate.valid_until()
+        match &self.authority {
+            Authority::Passkey(certificate) => certificate.valid_until(),
+            Authority::Stamp { .. } => self.charter.valid_until(),
+        }
     }
     /// Original Charter revision consulted by this observation, not a lineage epoch.
     pub fn charter_revision(&self) -> u64 {
@@ -151,7 +211,7 @@ pub fn verify_lineage<'a>(
         .map_err(|_| LineageError::Assertion)?;
     Ok(VerifiedLineageObservation {
         charter: current,
-        certificate,
+        authority: Authority::Passkey(certificate),
         lineage,
         author,
         checked_at: now,

@@ -1,11 +1,15 @@
 //! Original public lineage evidence for local retention and Records publication.
-use crate::{LineageError, Records, Vault, VerifiedLineageObservation, verify_lineage};
+use crate::{LineageError, Records, StampTrust, Vault, VerifiedLineageObservation, verify_lineage};
 use ckmg::{Authority, Clock, Entropy, Receipt};
+use cpsd::StampPresentation;
 use cwst::{Store, backend::Backend};
 
 const RECEIPT: &str = "lineage-receipt";
 const ASSERTION: &str = "lineage-assertion";
 const CERTIFICATE: &str = "lineage-certificate";
+const STAMP: &str = "lineage-stamp";
+const PASSKEY_PURPOSE: &str = "cvlt.lineage-evidence.v1";
+const STAMP_PURPOSE: &str = "cvlt.lineage-evidence.stamp.v1";
 
 /// Aggregate bound for the three original public evidence values in local Storage.
 pub const MAX_LINEAGE_EVIDENCE_BYTES: usize = cwst::MAX_VALUE_BYTES;
@@ -36,10 +40,34 @@ impl std::error::Error for EvidenceError {}
 /// Retained public evidence, never a current-authority capability.
 /// Every use must call `verify` inside the actual current Policy borrow.
 /// This container has no network publication format or automatic acknowledgement.
+///
+/// Two kinds exist: a passkey assertion under the Charter's registration certificate (every
+/// lineage change of a passkey member), and a wallet confirmation stamp (a member's FIRST
+/// community lineage only, verified offline with [`StampTrust`] at the receipt's signed time).
 pub struct LineageEvidence {
     receipt: Receipt,
-    assertion: ckyh::lineage::Assertion,
-    certificate: Vec<u8>,
+    proof: Proof,
+}
+enum Proof {
+    Passkey {
+        assertion: ckyh::lineage::Assertion,
+        certificate: Vec<u8>,
+    },
+    Stamp(StampProof),
+}
+/// Public genesis stamp evidence: the presentation of the `lineage_genesis` slot, the device's
+/// secret salt of that slot (public once presented) and the time `at` the stamp payload binds.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StampProof {
+    presentation: Vec<u8>,
+    salt: [u8; 32],
+    at: u64,
+}
+impl StampProof {
+    fn presentation(&self) -> Result<StampPresentation, LineageError> {
+        StampPresentation::from_bytes(&self.presentation).map_err(|_| LineageError::Stamp)
+    }
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -48,6 +76,15 @@ struct WireEvidence {
     receipt: Receipt,
     assertion: ckyh::lineage::Assertion,
     certificate: Vec<u8>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireStampEvidence {
+    purpose: String,
+    receipt: Receipt,
+    presentation: Vec<u8>,
+    salt: [u8; 32],
+    at: u64,
 }
 impl std::fmt::Debug for LineageEvidence {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -110,14 +147,28 @@ impl LineageEvidence {
     /// Publishing these bytes never acknowledges the Keys output automatically.
     pub fn to_bytes(&self) -> Result<Vec<u8>, EvidenceError> {
         self.encoded()?;
-        let mut assertion = self.assertion.clone();
-        assertion.user_handle = None;
-        let bytes = serde_json::to_vec(&WireEvidence {
-            purpose: "cvlt.lineage-evidence.v1".into(),
-            receipt: self.receipt.clone(),
-            assertion,
-            certificate: self.certificate.clone(),
-        })
+        let bytes = match &self.proof {
+            Proof::Passkey {
+                assertion,
+                certificate,
+            } => {
+                let mut assertion = assertion.clone();
+                assertion.user_handle = None;
+                serde_json::to_vec(&WireEvidence {
+                    purpose: PASSKEY_PURPOSE.into(),
+                    receipt: self.receipt.clone(),
+                    assertion,
+                    certificate: certificate.clone(),
+                })
+            }
+            Proof::Stamp(stamp) => serde_json::to_vec(&WireStampEvidence {
+                purpose: STAMP_PURPOSE.into(),
+                receipt: self.receipt.clone(),
+                presentation: stamp.presentation.clone(),
+                salt: stamp.salt,
+                at: stamp.at,
+            }),
+        }
         .map_err(|_| EvidenceError::Invalid)?;
         if bytes.len() > MAX_LINEAGE_EVIDENCE_BYTES {
             return Err(EvidenceError::Limit);
@@ -131,15 +182,31 @@ impl LineageEvidence {
         if bytes.len() > MAX_LINEAGE_EVIDENCE_BYTES {
             return Err(EvidenceError::Limit);
         }
-        let wire: WireEvidence =
-            serde_json::from_slice(bytes).map_err(|_| EvidenceError::Invalid)?;
-        if wire.purpose != "cvlt.lineage-evidence.v1" || wire.assertion.user_handle.is_some() {
-            return Err(EvidenceError::Invalid);
-        }
-        let evidence = Self {
-            receipt: wire.receipt,
-            assertion: wire.assertion,
-            certificate: wire.certificate,
+        let evidence = if let Ok(wire) = serde_json::from_slice::<WireEvidence>(bytes) {
+            if wire.purpose != PASSKEY_PURPOSE || wire.assertion.user_handle.is_some() {
+                return Err(EvidenceError::Invalid);
+            }
+            Self {
+                receipt: wire.receipt,
+                proof: Proof::Passkey {
+                    assertion: wire.assertion,
+                    certificate: wire.certificate,
+                },
+            }
+        } else {
+            let wire: WireStampEvidence =
+                serde_json::from_slice(bytes).map_err(|_| EvidenceError::Invalid)?;
+            if wire.purpose != STAMP_PURPOSE {
+                return Err(EvidenceError::Invalid);
+            }
+            Self {
+                receipt: wire.receipt,
+                proof: Proof::Stamp(StampProof {
+                    presentation: wire.presentation,
+                    salt: wire.salt,
+                    at: wire.at,
+                }),
+            }
         };
         evidence.encoded()?;
         Ok(evidence)
@@ -186,11 +253,56 @@ impl LineageEvidence {
         .map_err(EvidenceError::Evidence)?;
         let value = Self {
             receipt: receipt.clone(),
-            assertion: assertion.clone(),
-            certificate: signed_certificate.to_vec(),
+            proof: Proof::Passkey {
+                assertion: assertion.clone(),
+                certificate: signed_certificate.to_vec(),
+            },
         };
         value.encoded()?;
         Ok(PreparedLineageEvidence(value))
+    }
+
+    /// Capture genesis evidence by stamp for a member's FIRST lineage: the presentation of
+    /// the `lineage_genesis` slot (built over [`crate::lineage_genesis_action`] of this receipt
+    /// with `salt` and `at`). Verified like every later use, within one synchronous current
+    /// Policy borrow; the result has no authority across awaits.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_stamp(
+        current: &cchr::VerifiedCharter,
+        stamps: &StampTrust,
+        receipt: &Receipt,
+        presentation: &StampPresentation,
+        salt: [u8; 32],
+        at: u64,
+        expected_member: &str,
+        now: u64,
+    ) -> Result<PreparedLineageEvidence, EvidenceError> {
+        crate::lineage::verify_genesis(
+            current,
+            stamps,
+            receipt,
+            presentation,
+            salt,
+            at,
+            expected_member,
+            now,
+        )
+        .map_err(EvidenceError::Evidence)?;
+        let value = Self {
+            receipt: receipt.clone(),
+            proof: Proof::Stamp(StampProof {
+                presentation: presentation.to_bytes(),
+                salt,
+                at,
+            }),
+        };
+        value.encoded()?;
+        Ok(PreparedLineageEvidence(value))
+    }
+
+    /// Whether this is genesis evidence by stamp (which needs [`StampTrust`] to verify).
+    pub fn is_stamp(&self) -> bool {
+        matches!(self.proof, Proof::Stamp(_))
     }
 
     /// Original receipt operation; unrelated to a Store commit or network sequence.
@@ -198,21 +310,57 @@ impl LineageEvidence {
         self.receipt.operation.as_bytes()
     }
 
-    /// Reverify all original evidence against the current Charter and clock.
+    /// Reverify all original evidence against the current Charter and clock. Stamp evidence
+    /// needs the stamp trust and refuses here as `Policy(Unavailable)`; use
+    /// [`Self::verify_with_stamps`].
     pub fn verify<'a>(
         &'a self,
         current: &'a cchr::VerifiedCharter,
         expected_member: &str,
         now: u64,
     ) -> Result<VerifiedLineageObservation<'a>, LineageError> {
-        verify_lineage(
-            current,
-            &self.receipt,
-            &self.assertion,
-            &self.certificate,
-            expected_member,
-            now,
-        )
+        match &self.proof {
+            Proof::Passkey {
+                assertion,
+                certificate,
+            } => verify_lineage(
+                current,
+                &self.receipt,
+                assertion,
+                certificate,
+                expected_member,
+                now,
+            ),
+            Proof::Stamp(_) => Err(LineageError::Policy(cchr::Error::Unavailable)),
+        }
+    }
+
+    /// Reverify either kind against the current Charter and clock; stamp evidence also against
+    /// the wallet's authenticated stamp key ring and the rulebook cohort in `stamps`, judged at
+    /// the receipt's signed time (never at `now`).
+    pub fn verify_with_stamps<'a>(
+        &'a self,
+        current: &'a cchr::VerifiedCharter,
+        stamps: &StampTrust,
+        expected_member: &str,
+        now: u64,
+    ) -> Result<VerifiedLineageObservation<'a>, LineageError> {
+        match &self.proof {
+            Proof::Passkey { .. } => self.verify(current, expected_member, now),
+            Proof::Stamp(stamp) => {
+                let genesis = crate::lineage::verify_genesis(
+                    current,
+                    stamps,
+                    &self.receipt,
+                    &stamp.presentation()?,
+                    stamp.salt,
+                    stamp.at,
+                    expected_member,
+                    now,
+                )?;
+                Ok(VerifiedLineageObservation::stamped(current, genesis, now))
+            }
+        }
     }
 
     // Reachable publicly only through the sealed actual acknowledged-initial
@@ -224,10 +372,13 @@ impl LineageEvidence {
         expected_member: &str,
         now: u64,
     ) -> Result<VerifiedLineageObservation<'a>, LineageError> {
+        let Proof::Passkey { assertion, .. } = &self.proof else {
+            return Err(LineageError::Scope);
+        };
         verify_lineage(
             current,
             &self.receipt,
-            &self.assertion,
+            assertion,
             current_certificate,
             expected_member,
             now,
@@ -250,16 +401,32 @@ impl LineageEvidence {
         let certificate = store
             .read(CERTIFICATE, operation)
             .map_err(EvidenceError::Storage)?;
-        let (receipt, assertion, certificate) = match (receipt, assertion, certificate) {
-            (None, None, None) => return Ok(None),
-            (Some(r), Some(a), Some(b)) => (r, a, b),
+        let stamp = store
+            .read(STAMP, operation)
+            .map_err(EvidenceError::Storage)?;
+        let value = match (receipt, assertion, certificate, stamp) {
+            (None, None, None, None) => return Ok(None),
+            (Some(receipt), Some(assertion), Some(certificate), None) => {
+                bound(receipt.len(), assertion.len(), certificate.len())?;
+                Self {
+                    receipt: serde_json::from_slice(receipt).map_err(|_| EvidenceError::Invalid)?,
+                    proof: Proof::Passkey {
+                        assertion: serde_json::from_slice(assertion)
+                            .map_err(|_| EvidenceError::Invalid)?,
+                        certificate: certificate.to_vec(),
+                    },
+                }
+            }
+            (Some(receipt), None, None, Some(stamp)) => {
+                bound(receipt.len(), stamp.len(), 0)?;
+                Self {
+                    receipt: serde_json::from_slice(receipt).map_err(|_| EvidenceError::Invalid)?,
+                    proof: Proof::Stamp(
+                        serde_json::from_slice(stamp).map_err(|_| EvidenceError::Invalid)?,
+                    ),
+                }
+            }
             _ => return Err(EvidenceError::Invalid),
-        };
-        bound(receipt.len(), assertion.len(), certificate.len())?;
-        let value = Self {
-            receipt: serde_json::from_slice(receipt).map_err(|_| EvidenceError::Invalid)?,
-            assertion: serde_json::from_slice(assertion).map_err(|_| EvidenceError::Invalid)?,
-            certificate: certificate.to_vec(),
         };
         if value.operation() != operation
             || !store.is_scope(
@@ -277,27 +444,41 @@ impl LineageEvidence {
         Ok(Some(value))
     }
 
-    fn encoded(&self) -> Result<(Vec<u8>, Vec<u8>), EvidenceError> {
+    /// The retained Store values of this evidence, as (owner, value) pairs, within the bound.
+    fn encoded(&self) -> Result<Vec<(&'static str, Vec<u8>)>, EvidenceError> {
         let receipt = serde_json::to_vec(&self.receipt).map_err(|_| EvidenceError::Invalid)?;
-        let assertion = serde_json::to_vec(&self.assertion).map_err(|_| EvidenceError::Invalid)?;
-        bound(receipt.len(), assertion.len(), self.certificate.len())?;
-        Ok((receipt, assertion))
+        match &self.proof {
+            Proof::Passkey {
+                assertion,
+                certificate,
+            } => {
+                let assertion =
+                    serde_json::to_vec(assertion).map_err(|_| EvidenceError::Invalid)?;
+                bound(receipt.len(), assertion.len(), certificate.len())?;
+                Ok(vec![
+                    (RECEIPT, receipt),
+                    (ASSERTION, assertion),
+                    (CERTIFICATE, certificate.clone()),
+                ])
+            }
+            Proof::Stamp(stamp) => {
+                let stamp = serde_json::to_vec(stamp).map_err(|_| EvidenceError::Invalid)?;
+                bound(receipt.len(), stamp.len(), 0)?;
+                Ok(vec![(RECEIPT, receipt), (STAMP, stamp)])
+            }
+        }
     }
 
     pub(crate) fn retained_mutations(&self) -> Result<Vec<crate::Mutation>, EvidenceError> {
-        let (receipt, assertion) = self.encoded()?;
-        Ok([
-            (RECEIPT, receipt),
-            (ASSERTION, assertion),
-            (CERTIFICATE, self.certificate.clone()),
-        ]
-        .into_iter()
-        .map(|(owner, value)| crate::Mutation {
-            owner: owner.into(),
-            key: self.operation().to_vec(),
-            value: Some(value),
-        })
-        .collect())
+        Ok(self
+            .encoded()?
+            .into_iter()
+            .map(|(owner, value)| crate::Mutation {
+                owner: owner.into(),
+                key: self.operation().to_vec(),
+                value: Some(value),
+            })
+            .collect())
     }
 }
 
@@ -339,7 +520,7 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W> Vault<B, C, 
             return Err(EvidenceError::Invalid);
         }
         let evidence = &evidence.0;
-        let (receipt, assertion) = evidence.encoded()?;
+        let values = evidence.encoded()?;
         let storage = self.storage.clone();
         let expected = storage
             .lock()
@@ -366,23 +547,14 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W> Vault<B, C, 
         if !store.is_scope(lineage.binding.community()) {
             return Err(EvidenceError::Invalid);
         }
-        let changes = [
-            cwst::Change::Put {
-                owner: RECEIPT,
+        let changes: Vec<_> = values
+            .iter()
+            .map(|(owner, value)| cwst::Change::Put {
+                owner,
                 key: evidence.operation(),
-                value: &receipt,
-            },
-            cwst::Change::Put {
-                owner: ASSERTION,
-                key: evidence.operation(),
-                value: &assertion,
-            },
-            cwst::Change::Put {
-                owner: CERTIFICATE,
-                key: evidence.operation(),
-                value: &evidence.certificate,
-            },
-        ];
+                value,
+            })
+            .collect();
         let mut lock = LockOnDrop(Some(|| self.keys.lock()));
         let committed = store
             .commit_with_receipt(expected, operation, &changes, &[])

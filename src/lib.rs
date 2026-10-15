@@ -31,8 +31,9 @@ pub use initial::{
     RetiredInitial, UnenrolledInitial,
 };
 pub use lineage::{
-    LineageError, LineageRead, LineageRecords, VerifiedLineageObservation,
-    publish_lineage_revision, verify_lineage,
+    LINEAGE_GENESIS_ACTION, LineageError, LineageRead, LineageRecords, StampKeyPeriod, StampTrust,
+    UNFOUNDED_FINGERPRINT_TAG, VerifiedLineageObservation, lineage_genesis_action,
+    lineage_stamp_scope, publish_lineage_revision, verify_lineage,
 };
 pub use pairing_guest::{AcceptedPairing, PairingGuest};
 pub use records::{
