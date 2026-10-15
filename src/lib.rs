@@ -31,8 +31,9 @@ pub use initial::{
     RetiredInitial, UnenrolledInitial,
 };
 pub use lineage::{
-    LINEAGE_GENESIS_ACTION, LineageError, LineageRead, LineageRecords, StampKeyPeriod, StampTrust,
-    VerifiedLineageObservation, lineage_genesis_action, lineage_stamp_scope,
+    GenesisError, GenesisStampEvidence, LINEAGE_GENESIS_ACTION, LineageError, LineageRead,
+    LineageRecords, StampKeyPeriod, StampTrust, VerifiedLineageObservation, genesis_stamp_scope,
+    lineage_genesis_action, lineage_genesis_action_for, lineage_stamp_scope,
     publish_lineage_revision, verify_lineage,
 };
 pub use pairing_guest::{AcceptedPairing, PairingGuest};

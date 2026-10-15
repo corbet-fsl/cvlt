@@ -9,7 +9,7 @@ use cpsd::{
 };
 use csgn::{Kind, SecretKey, Signer};
 use cvlt::{
-    EvidenceError, LineageError, LineageEvidence, StampKeyPeriod, StampTrust,
+    EvidenceError, GenesisError, LineageError, LineageEvidence, StampKeyPeriod, StampTrust,
     lineage_genesis_action, lineage_stamp_scope,
 };
 use serde_json::{Value, json};
@@ -470,16 +470,16 @@ fn retired_stamp_keys_verify_only_inside_their_validity_period() {
     // The ring itself refuses empty, inverted and duplicate entries.
     assert_eq!(
         StampTrust::new(vec![], params()).unwrap_err(),
-        LineageError::Stamp
+        GenesisError::Stamp
     );
     assert_eq!(
         StampKeyPeriod::new(g.key.public_key().clone(), NOW, Some(NOW)).unwrap_err(),
-        LineageError::Stamp
+        GenesisError::Stamp
     );
     let twice = StampKeyPeriod::new(g.key.public_key().clone(), 0, None).unwrap();
     assert_eq!(
         StampTrust::new(vec![twice.clone(), twice], params()).unwrap_err(),
-        LineageError::Stamp
+        GenesisError::Stamp
     );
 }
 
@@ -746,4 +746,79 @@ fn stamp_evidence_is_retained_locally_and_reverified_after_reopen() {
             LineageError::Policy(cchr::Error::Unavailable)
         );
     });
+}
+
+#[test]
+fn the_server_verifies_the_same_bytes_with_charter_alone_and_no_charter_document() {
+    let mut g = genesis();
+    let mut owner = charter("alpha", NOW, &[]);
+    let current = owner.current(NOW).unwrap();
+    let receipt = g.first.receipt.clone();
+    let evidence = evidence(&mut g, &receipt, current, NOW, NOW);
+    let stamps = trust(&[(&g.key, NOW - DAY, None)]);
+    let observed = evidence
+        .verify_with_stamps(current, &stamps, &g.member, NOW)
+        .unwrap();
+
+    // The bind bytes are exactly the published evidence bytes; Charter decodes them.
+    let bytes = evidence.genesis_stamp().unwrap().to_bytes().unwrap();
+    assert_eq!(bytes, evidence.to_bytes().unwrap());
+    let server = cchr::GenesisStampEvidence::from_bytes(&bytes).unwrap();
+    assert_eq!(server.at(), NOW);
+    assert_eq!(server.receipt(), &receipt);
+    let verified = cchr::verify_genesis_parts(
+        "alpha",
+        current.fingerprint(),
+        &stamps,
+        &server,
+        &g.member,
+        NOW,
+    )
+    .unwrap();
+    let (lineage, author) = receipt.attested_lineage().unwrap();
+    assert_eq!(verified.lineage(), lineage);
+    assert_eq!(verified.author(), &author);
+    assert_eq!(
+        verified.stamp().digest().to_bytes(),
+        observed.stamp_digest(NOW).unwrap()
+    );
+    assert_eq!(verified.into_stamp().action_kind().as_str(), "lineage_genesis");
+
+    // Another member, community or fingerprint refuses; so does a time before the receipt.
+    let refuse = |community: &str, fingerprint: Option<&[u8; 32]>, member: &str, now: u64| {
+        cchr::verify_genesis_parts(community, fingerprint, &stamps, &server, member, now)
+            .unwrap_err()
+    };
+    let other = nym(&OpaqueHolder::from_seed(&mut [41; 32]), "alpha");
+    assert_eq!(
+        refuse("alpha", current.fingerprint(), &other, NOW),
+        GenesisError::Scope
+    );
+    assert_eq!(
+        refuse("beta", current.fingerprint(), &g.member, NOW),
+        GenesisError::Scope
+    );
+    assert_eq!(refuse("alpha", Some(&[7; 32]), &g.member, NOW), GenesisError::Stamp);
+    assert_eq!(
+        refuse("alpha", current.fingerprint(), &g.member, NOW - 1),
+        GenesisError::Clock
+    );
+
+    // A pre-activation device derives the same action from the receipt's challenge digest.
+    assert!(
+        cvlt::lineage_genesis_action_for(receipt.passkey_challenge().unwrap(), SALT, NOW).unwrap()
+            == lineage_genesis_action(&receipt, SALT, NOW).unwrap()
+    );
+    // Malformed and foreign-purpose bytes are refused before any verification.
+    assert_eq!(
+        cchr::GenesisStampEvidence::from_bytes(b"{}").unwrap_err(),
+        GenesisError::Invalid
+    );
+    let mut foreign: Value = serde_json::from_slice(&bytes).unwrap();
+    foreign["purpose"] = json!("cvlt.lineage-evidence.v1");
+    assert_eq!(
+        cchr::GenesisStampEvidence::from_bytes(&serde_json::to_vec(&foreign).unwrap())
+            .unwrap_err(),
+        GenesisError::Invalid
+    );
 }

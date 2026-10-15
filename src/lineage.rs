@@ -9,8 +9,10 @@ mod stamp;
 pub use records::{LineageRead, LineageRecords};
 pub use revision::publish_lineage_revision;
 pub(crate) use stamp::verify_genesis;
+pub use cchr::{GenesisError, StampTrust};
 pub use stamp::{
-    LINEAGE_GENESIS_ACTION, StampKeyPeriod, StampTrust, lineage_genesis_action, lineage_stamp_scope,
+    GenesisStampEvidence, LINEAGE_GENESIS_ACTION, StampKeyPeriod, genesis_stamp_scope,
+    lineage_genesis_action, lineage_genesis_action_for, lineage_stamp_scope,
 };
 
 /// Fixed evidence refusal, with no supplied identities, ciphertext or assertions.
@@ -61,16 +63,16 @@ enum Authority<'a> {
 impl<'a> VerifiedLineageObservation<'a> {
     pub(crate) fn stamped(
         charter: &'a VerifiedCharter,
-        genesis: stamp::VerifiedGenesis<'a>,
+        genesis: cchr::VerifiedGenesis<'a>,
         now: u64,
     ) -> Self {
         Self {
             charter,
             authority: Authority::Stamp {
-                digest: genesis.digest,
+                digest: genesis.stamp().digest().to_bytes(),
             },
-            lineage: genesis.lineage,
-            author: genesis.author,
+            lineage: genesis.lineage(),
+            author: *genesis.author(),
             checked_at: now,
         }
     }

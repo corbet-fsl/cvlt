@@ -1,5 +1,8 @@
 //! Original public lineage evidence for local retention and Records publication.
-use crate::{LineageError, Records, StampTrust, Vault, VerifiedLineageObservation, verify_lineage};
+use crate::{
+    GenesisStampEvidence, LineageError, Records, StampTrust, Vault, VerifiedLineageObservation,
+    verify_lineage,
+};
 use ckmg::{Authority, Clock, Entropy, Receipt};
 use cpsd::StampPresentation;
 use cwst::{Store, backend::Backend};
@@ -9,7 +12,6 @@ const ASSERTION: &str = "lineage-assertion";
 const CERTIFICATE: &str = "lineage-certificate";
 const STAMP: &str = "lineage-stamp";
 const PASSKEY_PURPOSE: &str = "cvlt.lineage-evidence.v1";
-const STAMP_PURPOSE: &str = "cvlt.lineage-evidence.stamp.v1";
 
 /// Aggregate bound for the three original public evidence values in local Storage.
 pub const MAX_LINEAGE_EVIDENCE_BYTES: usize = cwst::MAX_VALUE_BYTES;
@@ -53,11 +55,13 @@ enum Proof {
         assertion: ckyh::lineage::Assertion,
         certificate: Vec<u8>,
     },
-    Stamp(StampProof),
+    /// Charter's public genesis stamp evidence (its wire bytes are this evidence's bytes).
+    Stamp(Box<GenesisStampEvidence>),
 }
-/// Public genesis stamp evidence: the presentation of the `lineage_genesis` slot, the device's
-/// secret salt of that slot (public once presented) and the time `at` the stamp payload binds.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+/// Local Storage value of genesis stamp evidence beside the receipt: the presentation of the
+/// `lineage_genesis` slot, the device's salt of that slot (public once presented) and the time
+/// `at` the stamp payload binds.
+#[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StampProof {
     presentation: Vec<u8>,
@@ -65,8 +69,15 @@ struct StampProof {
     at: u64,
 }
 impl StampProof {
-    fn presentation(&self) -> Result<StampPresentation, LineageError> {
-        StampPresentation::from_bytes(&self.presentation).map_err(|_| LineageError::Stamp)
+    fn evidence(self, receipt: &Receipt) -> Result<GenesisStampEvidence, EvidenceError> {
+        let presentation =
+            StampPresentation::from_bytes(&self.presentation).map_err(|_| EvidenceError::Invalid)?;
+        Ok(GenesisStampEvidence::new(
+            receipt.clone(),
+            &presentation,
+            self.salt,
+            self.at,
+        ))
     }
 }
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -76,15 +87,6 @@ struct WireEvidence {
     receipt: Receipt,
     assertion: ckyh::lineage::Assertion,
     certificate: Vec<u8>,
-}
-#[derive(serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WireStampEvidence {
-    purpose: String,
-    receipt: Receipt,
-    presentation: Vec<u8>,
-    salt: [u8; 32],
-    at: u64,
 }
 impl std::fmt::Debug for LineageEvidence {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -160,16 +162,11 @@ impl LineageEvidence {
                     assertion,
                     certificate: certificate.clone(),
                 })
+                .map_err(|_| EvidenceError::Invalid)?
             }
-            Proof::Stamp(stamp) => serde_json::to_vec(&WireStampEvidence {
-                purpose: STAMP_PURPOSE.into(),
-                receipt: self.receipt.clone(),
-                presentation: stamp.presentation.clone(),
-                salt: stamp.salt,
-                at: stamp.at,
-            }),
-        }
-        .map_err(|_| EvidenceError::Invalid)?;
+            // Charter owns the stamp evidence wire, so the server decodes these exact bytes.
+            Proof::Stamp(stamp) => stamp.to_bytes().map_err(|_| EvidenceError::Invalid)?,
+        };
         if bytes.len() > MAX_LINEAGE_EVIDENCE_BYTES {
             return Err(EvidenceError::Limit);
         }
@@ -194,18 +191,11 @@ impl LineageEvidence {
                 },
             }
         } else {
-            let wire: WireStampEvidence =
-                serde_json::from_slice(bytes).map_err(|_| EvidenceError::Invalid)?;
-            if wire.purpose != STAMP_PURPOSE {
-                return Err(EvidenceError::Invalid);
-            }
+            let stamp =
+                GenesisStampEvidence::from_bytes(bytes).map_err(|_| EvidenceError::Invalid)?;
             Self {
-                receipt: wire.receipt,
-                proof: Proof::Stamp(StampProof {
-                    presentation: wire.presentation,
-                    salt: wire.salt,
-                    at: wire.at,
-                }),
+                receipt: stamp.receipt().clone(),
+                proof: Proof::Stamp(Box::new(stamp)),
             }
         };
         evidence.encoded()?;
@@ -290,11 +280,12 @@ impl LineageEvidence {
         .map_err(EvidenceError::Evidence)?;
         let value = Self {
             receipt: receipt.clone(),
-            proof: Proof::Stamp(StampProof {
-                presentation: presentation.to_bytes(),
+            proof: Proof::Stamp(Box::new(GenesisStampEvidence::new(
+                receipt.clone(),
+                presentation,
                 salt,
                 at,
-            }),
+            ))),
         };
         value.encoded()?;
         Ok(PreparedLineageEvidence(value))
@@ -303,6 +294,15 @@ impl LineageEvidence {
     /// Whether this is genesis evidence by stamp (which needs [`StampTrust`] to verify).
     pub fn is_stamp(&self) -> bool {
         matches!(self.proof, Proof::Stamp(_))
+    }
+
+    /// The Charter genesis stamp evidence inside, if this is stamp evidence: what a device
+    /// sends with its first publication bind (`GenesisStampEvidence::to_bytes`).
+    pub fn genesis_stamp(&self) -> Option<&GenesisStampEvidence> {
+        match &self.proof {
+            Proof::Stamp(stamp) => Some(stamp),
+            Proof::Passkey { .. } => None,
+        }
     }
 
     /// Original receipt operation; unrelated to a Store commit or network sequence.
@@ -353,8 +353,8 @@ impl LineageEvidence {
                     stamps,
                     &self.receipt,
                     &stamp.presentation()?,
-                    stamp.salt,
-                    stamp.at,
+                    stamp.salt(),
+                    stamp.at(),
                     expected_member,
                     now,
                 )?;
@@ -419,11 +419,13 @@ impl LineageEvidence {
             }
             (Some(receipt), None, None, Some(stamp)) => {
                 bound(receipt.len(), stamp.len(), 0)?;
+                let receipt: Receipt =
+                    serde_json::from_slice(receipt).map_err(|_| EvidenceError::Invalid)?;
+                let stamp: StampProof =
+                    serde_json::from_slice(stamp).map_err(|_| EvidenceError::Invalid)?;
                 Self {
-                    receipt: serde_json::from_slice(receipt).map_err(|_| EvidenceError::Invalid)?,
-                    proof: Proof::Stamp(
-                        serde_json::from_slice(stamp).map_err(|_| EvidenceError::Invalid)?,
-                    ),
+                    proof: Proof::Stamp(Box::new(stamp.evidence(&receipt)?)),
+                    receipt,
                 }
             }
             _ => return Err(EvidenceError::Invalid),
@@ -462,7 +464,12 @@ impl LineageEvidence {
                 ])
             }
             Proof::Stamp(stamp) => {
-                let stamp = serde_json::to_vec(stamp).map_err(|_| EvidenceError::Invalid)?;
+                let stamp = serde_json::to_vec(&StampProof {
+                    presentation: stamp.presentation_bytes().to_vec(),
+                    salt: stamp.salt(),
+                    at: stamp.at(),
+                })
+                .map_err(|_| EvidenceError::Invalid)?;
                 bound(receipt.len(), stamp.len(), 0)?;
                 Ok(vec![(RECEIPT, receipt), (STAMP, stamp)])
             }
