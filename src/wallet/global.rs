@@ -131,6 +131,58 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
             .await
     }
 
+    /// Begin one confirmation stamp only after its private opening is durable, so the one
+    /// confirmation a person gives for the returned request survives a restart.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn begin_global_stamp<
+        G: cwlt::passport::rand::RngCore + cwlt::passport::rand::CryptoRng,
+    >(
+        &mut self,
+        operation: [u8; 32],
+        rng: &mut G,
+        issuer: &cwlt::passport::StampPublicKey,
+        challenge: &cwlt::passport::IssuanceChallenge,
+        actions: &[(cwlt::passport::StampScope, cwlt::passport::StampAction)],
+        now: cwlt::passport::Timestamp,
+    ) -> Result<cwlt::passport::StampIssuanceRequest, WalletRestoreError> {
+        self.mutate_global_passport(|holder, store| {
+            holder.prepare_begin_stamp(store, operation, rng, issuer, challenge, actions, now)
+        })
+        .await?
+        .map_err(|error| WalletRestoreError::Passport(error.into()))
+    }
+
+    /// Retain the wallet's signature-verified stamp; a refused answer consumes the attempt.
+    pub async fn finish_global_stamp<
+        G: cwlt::passport::rand::RngCore + cwlt::passport::rand::CryptoRng,
+    >(
+        &mut self,
+        operation: [u8; 32],
+        rng: &mut G,
+        response: &cwlt::passport::BlindStamp,
+        now: cwlt::passport::Timestamp,
+    ) -> Result<(), WalletRestoreError> {
+        self.mutate_global_passport(|holder, store| {
+            holder.prepare_finish_stamp(store, operation, rng, response, now)
+        })
+        .await?
+        .map_err(|error| WalletRestoreError::Passport(error.into()))
+    }
+
+    /// Drop a pending stamp request; retained stamps stay.
+    pub async fn cancel_global_stamp<
+        G: cwlt::passport::rand::RngCore + cwlt::passport::rand::CryptoRng,
+    >(
+        &mut self,
+        operation: [u8; 32],
+        rng: &mut G,
+    ) -> Result<(), WalletRestoreError> {
+        self.mutate_global_passport(|holder, store| {
+            holder.prepare_cancel_stamp(store, operation, rng)
+        })
+        .await
+    }
+
     /// Borrow only the original read/proof session after fresh global Use and
     /// exact sealed-record checks. No holder, seed or mutable engine can escape.
     pub async fn with_global_passport<T>(
