@@ -12,8 +12,8 @@ pub use account::{AccountSlot, CommunityAccountCustody};
 /// external proof runtime, Wave reservation or release is created by restoration.
 /// Their private engines can only be borrowed through fresh Vault authority.
 pub struct WalletCustody {
-    passport: cwlt::passport::DurableHolder,
-    record: cwlt::record::DurableRecord,
+    passport: Option<cwlt::passport::DurableHolder>,
+    record: Option<cwlt::record::DurableRecord>,
     /// The community account capsule, when this community has one. Present so the
     /// one Vault of a device owns the Store for the account actor too.
     pub(crate) account: Option<cwlt::account_owner::DurableAccountOwner>,
@@ -101,8 +101,8 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
             key_store: self.key_store,
             records: self.records,
             wallet: WalletCustody {
-                passport,
-                record,
+                passport: Some(passport),
+                record: Some(record),
                 account,
             },
         })
@@ -141,11 +141,20 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
         let mut store = storage.lock().await;
         self.authorize_wallet_store(&store).await?;
         let pending =
-            prepare(&self.wallet.passport, &store, rng).map_err(WalletRestoreError::Passport)?;
+            prepare(
+            self.wallet.passport.as_ref().ok_or(WalletRestoreError::Scope)?,
+            &store,
+            rng,
+        ).map_err(WalletRestoreError::Passport)?;
         // Original Pending checks its exact owner record and CAS receipt. No
         // request/finish result can escape before its private state is durable.
         let output = pending
-            .commit(&mut self.wallet.passport, &mut store, &[], &[])
+            .commit(
+                self.wallet.passport.as_mut().ok_or(WalletRestoreError::Scope)?,
+                &mut store,
+                &[],
+                &[],
+            )
             .await
             .map_err(WalletRestoreError::Passport)?;
         // Revocation during persistence suppresses the output. The original
@@ -223,7 +232,11 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
         if !store.is_scope(binding.community()) {
             return Err(ckmg::Error::Unauthorized);
         }
-        Ok(read(&self.wallet.passport, &self.wallet.record, &store))
+        Ok(read(
+            self.wallet.passport.as_ref().ok_or(ckmg::Error::Unauthorized)?,
+            self.wallet.record.as_ref().ok_or(ckmg::Error::Unauthorized)?,
+            &store,
+        ))
     }
 }
 

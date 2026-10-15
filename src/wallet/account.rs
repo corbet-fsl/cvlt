@@ -28,6 +28,32 @@ impl AccountSlot for WalletCustody {
 }
 
 impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, A, R, ()> {
+    /// Like `restore_community_account`, but the Vault keeps the member's wallet
+    /// custody type, holding only the account capsule (no passport or record owner,
+    /// which a community Store enrolled through the account path does not have).
+    pub async fn restore_account_only_custody(
+        self,
+    ) -> Result<Vault<B, C, E, A, R, WalletCustody>, WalletRestoreError> {
+        let Vault {
+            keys,
+            storage,
+            key_store,
+            records,
+            wallet,
+        } = self.restore_community_account().await?;
+        Ok(Vault {
+            keys,
+            storage,
+            key_store,
+            records,
+            wallet: WalletCustody {
+                passport: None,
+                record: None,
+                account: Some(wallet.account),
+            },
+        })
+    }
+
     /// Restore only the existing original community account capsule after normal
     /// Vault recovery. Missing state, foreign binding and global wallet refuse;
     /// ordinary Use never grants replacement-key creation.
