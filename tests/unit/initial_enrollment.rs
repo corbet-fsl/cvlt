@@ -619,6 +619,17 @@ shared!(
                 .unwrap(),
             signature
         );
+        // The opening alone signs the session message with the same key (a device restarted
+        // after activation), equal to the enrollment's session signature.
+        let session = opening(9, "garden").sign_device_session(payload).unwrap();
+        assert_eq!(
+            pending
+                .sign_device(ckmg::DevicePurpose::DeviceSession, payload)
+                .unwrap(),
+            session
+        );
+        let signed = [ckmg::DevicePurpose::DeviceSession.tag(), &payload[..]].concat();
+        ckmg::verify_ed25519(device.value(), &signed, &session).unwrap();
         // Activation keeps the device key as the authority reference and the time.
         let mut owner = DeviceOwner {
             device,

@@ -79,6 +79,13 @@ impl PreparedOpen {
         passkey::device_public_key(&self.prf, &self.scope).map_err(OpenError::Keys)
     }
 
+    /// The device key's session signature over `payload` (ckmg prepends the session tag), for
+    /// a device-key member restarted after activation: its community sessions open before its
+    /// Keys are live. Only the session purpose; before activation the enrollment signs.
+    pub fn sign_device_session(&self, payload: &[u8]) -> Result<[u8; 64], OpenError> {
+        passkey::sign_device_session(&self.prf, &self.scope, payload).map_err(OpenError::Keys)
+    }
+
     /// Create the independent node-only owner from this same consumed unlock.
     /// It must remain the runtime's sole transport custody owner throughout
     /// restore and member use, then be dropped/locked with this login session.
