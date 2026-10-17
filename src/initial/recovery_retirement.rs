@@ -126,7 +126,7 @@ impl RetiredInitial {
         now: u64,
     ) -> Result<crate::RecoveryCandidate, OpenError> {
         self.opening
-            .prepare_recovery(&self.checkpoint, current, expected_member, now)
+            .prepare_recovery(&self.checkpoint, current, None, expected_member, now)
     }
 }
 

@@ -29,16 +29,19 @@ impl PreparedOpen {
     /// read and live HTTPS membership check for these exact checkpoint claims.
     /// The Authority rechecks current policy after its awaits; the borrowed
     /// Charter observation here is never an accepting cache or lease.
+    /// A device-key member's checkpoint carries stamp genesis evidence: it verifies only
+    /// with the wallet's stamp trust (`stamps`), at the receipt's signed time.
     pub fn prepare_recovery(
         self,
         checkpoint: &RecordCheckpoint,
         current: &cchr::VerifiedCharter,
+        stamps: Option<&crate::StampTrust>,
         expected_member: &str,
         now: u64,
     ) -> Result<RecoveryCandidate, OpenError> {
         let evidence = checkpoint.evidence().ok_or(OpenError::RecoveryRequired)?;
         let observed = evidence
-            .verify(current, expected_member, now)
+            .verify_for(current, stamps, expected_member, now)
             .map_err(OpenError::Evidence)?;
         let inspection = self.inspect_record(checkpoint)?;
         if inspection.lineage() != observed.lineage(now).map_err(OpenError::Evidence)? {
