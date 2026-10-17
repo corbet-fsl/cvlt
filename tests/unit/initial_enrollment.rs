@@ -628,6 +628,20 @@ shared!(
                 .unwrap(),
             session
         );
+        // It rebuilds the salt signature bit-exact and refuses the join purpose.
+        assert_eq!(
+            opening(9, "garden")
+                .sign_device(ckmg::DevicePurpose::SaltDerivation, payload)
+                .unwrap(),
+            pending
+                .sign_device(ckmg::DevicePurpose::SaltDerivation, payload)
+                .unwrap()
+        );
+        assert!(
+            opening(9, "garden")
+                .sign_device(ckmg::DevicePurpose::DeviceJoin, payload)
+                .is_err()
+        );
         let signed = [ckmg::DevicePurpose::DeviceSession.tag(), &payload[..]].concat();
         ckmg::verify_ed25519(device.value(), &signed, &session).unwrap();
         // Activation keeps the device key as the authority reference and the time.

@@ -86,6 +86,18 @@ impl PreparedOpen {
         passkey::sign_device_session(&self.prf, &self.scope, payload).map_err(OpenError::Keys)
     }
 
+    /// The same opening signer for a device-key member restarted during its first
+    /// publication: `DeviceSession` or `SaltDerivation` (its genesis stamp salt, rebuilt
+    /// bit-exact); `DeviceJoin` is refused (the enrollment signs it before activation).
+    pub fn sign_device(
+        &self,
+        purpose: ckmg::DevicePurpose,
+        payload: &[u8],
+    ) -> Result<[u8; 64], OpenError> {
+        passkey::sign_device_opened(&self.prf, &self.scope, purpose, payload)
+            .map_err(OpenError::Keys)
+    }
+
     /// Create the independent node-only owner from this same consumed unlock.
     /// It must remain the runtime's sole transport custody owner throughout
     /// restore and member use, then be dropped/locked with this login session.
