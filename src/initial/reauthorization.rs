@@ -176,3 +176,7 @@ impl std::fmt::Debug for CurrentInitialLineage<'_> {
         f.write_str("CurrentInitialLineage([redacted])")
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "../../tests/unit/initial_reauthorize_stamps.rs"]
+mod stamp_tests;

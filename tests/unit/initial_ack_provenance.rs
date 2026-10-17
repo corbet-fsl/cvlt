@@ -191,6 +191,25 @@ shared!(
             fresh.lineage(70).unwrap(),
             initial.receipt().attested_lineage().unwrap().0
         );
+        // The stamp twin never accepts passkey evidence, whatever stamp trust it is given.
+        let stamp_params = cpsd::StampParams::new(86_400).unwrap();
+        let stamp_key = cpsd::StampIssuerKey::generate(
+            &mut cpsd::rand::rngs::OsRng,
+            cpsd::KeyId::new("stamp-1").unwrap(),
+            &stamp_params,
+        )
+        .unwrap();
+        let stamps = crate::StampTrust::new(
+            vec![crate::StampKeyPeriod::new(stamp_key.public_key().clone(), 0, None).unwrap()],
+            stamp_params,
+        )
+        .unwrap();
+        assert_eq!(
+            acknowledged
+                .reauthorize_with_stamps(current, &stamps, "original", 70)
+                .unwrap_err(),
+            crate::LineageError::Scope
+        );
         // A fresh original passkey opening, with no pending/completion owner, reads
         // only authenticated public facts from this normal encrypted checkpoint.
         let opening = key.opening().await;
