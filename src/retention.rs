@@ -363,6 +363,22 @@ impl LineageEvidence {
         }
     }
 
+    /// [`Self::verify_with_stamps`] when the wallet's stamp trust is held, else
+    /// [`Self::verify`], under which stamp evidence refuses. For owners that hold the trust
+    /// only for device-key members.
+    pub fn verify_for<'a>(
+        &'a self,
+        current: &'a cchr::VerifiedCharter,
+        stamps: Option<&StampTrust>,
+        expected_member: &str,
+        now: u64,
+    ) -> Result<VerifiedLineageObservation<'a>, LineageError> {
+        match stamps {
+            Some(stamps) => self.verify_with_stamps(current, stamps, expected_member, now),
+            None => self.verify(current, expected_member, now),
+        }
+    }
+
     // Reachable publicly only through the sealed actual acknowledged-initial
     // candidate. Ordinary evidence verification retains its original semantics.
     pub(crate) fn reauthorize_initial<'a>(

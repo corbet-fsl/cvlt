@@ -371,6 +371,44 @@ fn genesis_stamp_verifies_at_the_receipt_time_also_after_the_stamp_expired() {
 }
 
 #[test]
+fn verify_for_checks_stamp_evidence_only_with_the_stamp_trust() {
+    let mut g = genesis();
+    let mut owner = charter("alpha", NOW, &[]);
+    let current = owner.current(NOW).unwrap();
+    let receipt = g.first.receipt.clone();
+    let evidence = evidence(&mut g, &receipt, current, NOW, NOW);
+    let stamps = trust(&[(&g.key, NOW - DAY, None)]);
+    // With the trust: exactly the stamp verifier's observation, also after the stamp expired.
+    let later = NOW + 3 * DAY;
+    let mut later_owner = charter("alpha", later, &[]);
+    let later_current = later_owner.current(later).unwrap();
+    let observed = evidence
+        .verify_for(later_current, Some(&stamps), &g.member, later)
+        .unwrap();
+    assert_eq!(
+        observed.stamp_digest(later).unwrap(),
+        evidence
+            .verify_with_stamps(later_current, &stamps, &g.member, later)
+            .unwrap()
+            .stamp_digest(later)
+            .unwrap()
+    );
+    // Without it the stamp evidence refuses, as `verify` does.
+    assert_eq!(
+        evidence
+            .verify_for(current, None, &g.member, NOW)
+            .unwrap_err(),
+        LineageError::Policy(cchr::Error::Unavailable)
+    );
+    // Another member's trust never accepts it.
+    assert!(
+        evidence
+            .verify_for(current, Some(&stamps), "another-member", NOW)
+            .is_err()
+    );
+}
+
+#[test]
 fn a_receipt_time_outside_the_stamp_cohort_or_after_now_refuses() {
     let mut g = genesis();
     let mut owner = charter("alpha", NOW, &[]);
