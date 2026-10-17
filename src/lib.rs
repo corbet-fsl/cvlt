@@ -178,5 +178,6 @@ pub use compound::native_checkpoint_record;
 mod wallet;
 #[cfg(feature = "wallet")]
 pub use wallet::{
-    AccountSlot, CommunityAccountCustody, GlobalPassportCustody, WalletCustody, WalletRestoreError,
+    AccountSlot, CommunityAccountCustody, GlobalPassportCustody, RecordSlot, WalletCustody,
+    WalletRestoreError,
 };

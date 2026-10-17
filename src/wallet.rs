@@ -7,6 +7,8 @@ pub(crate) mod global;
 pub use global::GlobalPassportCustody;
 pub(crate) mod account;
 pub use account::{AccountSlot, CommunityAccountCustody};
+pub(crate) mod record;
+pub use record::RecordSlot;
 
 /// Original durable passport and epoch-record owners. No accepted balance,
 /// external proof runtime, Wave reservation or release is created by restoration.
