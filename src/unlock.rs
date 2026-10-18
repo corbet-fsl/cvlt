@@ -62,6 +62,21 @@ impl WalletUnlock {
         PreparedOpen::from_prf(self.0.as_slice(), crate::MEMBERSHIP_SCOPE)
     }
 
+    /// The wallet's membership index on a record network, with the cipher that seals it.
+    /// Both derive from `W` under [`crate::MEMBERSHIP_SCOPE`] only.
+    pub fn index_record<N: cdht::Network>(
+        &self,
+        network: N,
+    ) -> Result<(crate::TorIndexRecord<N>, ckmg::passkey::StoreCipher), crate::IndexError> {
+        let prf = passkey::PrfOutput::from_bytes(self.0.as_slice())
+            .map_err(|_| crate::IndexError::Invalid)?;
+        let writer = passkey::passkey_record_writer(&prf, crate::MEMBERSHIP_SCOPE)
+            .map_err(|_| crate::IndexError::Invalid)?;
+        let cipher = passkey::store_cipher(&prf, crate::MEMBERSHIP_SCOPE)
+            .map_err(|_| crate::IndexError::Invalid)?;
+        Ok((crate::TorIndexRecord::new(network, writer)?, cipher))
+    }
+
     /// One community's vault, without any further passkey ceremony.
     /// `fingerprint` is the community's founding-key fingerprint (its identity,
     /// as pinned in [`crate::CommunityPin::fingerprint`]); `scope` is the vault's
