@@ -99,6 +99,16 @@ impl RecoveryCandidate {
             .ok_or(OpenError::RecoveryRequired)
     }
 
+    /// The original enrollment's seed commitment, from the PRF-authenticated initial ACK.
+    /// Public: the community keeps it from the device-key join. A restoring device presents
+    /// it to have that applied join re-confirmed (its member id); it grants no authority.
+    pub fn initial_seed(&self) -> Result<[u8; 32], OpenError> {
+        self.initial
+            .as_ref()
+            .map(ckmg::InitialCheckpointProvenance::seed)
+            .ok_or(OpenError::RecoveryRequired)
+    }
+
     /// Borrow only the approved provisional lineage read key for this attempt.
     /// Current policy and fresh HTTPS are rechecked by the supplied original
     /// recovery authority. Drop the reader before consuming/dropping the attempt.
