@@ -7,6 +7,7 @@ mod credential;
 mod existing;
 mod initial;
 mod lineage;
+mod membership_index;
 mod pairing_guest;
 mod read_floors;
 mod records;
@@ -17,6 +18,10 @@ mod update_outbox;
 mod witness_state;
 mod voucher_custody;
 use ckmg::{Authority, Clock, Entropy, Locator};
+pub use membership_index::{
+    IndexError, IndexRecord, MEMBERSHIP_SCOPE, MembershipEntry, MembershipIndex, Observed, Outcome,
+    WalletIndexRecord, add_entry, read_index,
+};
 pub use community_pin::{CommunityPin, PinnedHead};
 pub use compound::{
     CHECKPOINT_SUBKEYS, CheckpointError, CheckpointPublication, CompoundRecords,

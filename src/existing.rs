@@ -113,6 +113,11 @@ impl PreparedOpen {
         ckmg::TransportSession::new(&self.prf, binding, clock, authority).map_err(OpenError::Keys)
     }
 
+    /// The storage cipher of this opening's scope; seals the wallet membership index.
+    pub fn index_cipher(&self) -> Result<ckmg::passkey::StoreCipher, OpenError> {
+        passkey::store_cipher(&self.prf, &self.scope).map_err(OpenError::Keys)
+    }
+
     /// Lend the original narrow wrapping capability to the live Authority owner.
     /// It survives this preparation's consumption without cloning the PRF. The
     /// composer must retain it only inside custody and drop it on invalidation;

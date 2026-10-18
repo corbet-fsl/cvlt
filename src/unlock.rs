@@ -56,6 +56,12 @@ impl WalletUnlock {
         PreparedOpen::from_prf(self.0.as_slice(), WALLET_SCOPE)
     }
 
+    /// The wallet membership index record (see [`crate::membership_index`]): its locator and
+    /// record material derive from `W` under [`crate::MEMBERSHIP_SCOPE`], no community.
+    pub fn membership_index(&self) -> Result<PreparedOpen, OpenError> {
+        PreparedOpen::from_prf(self.0.as_slice(), crate::MEMBERSHIP_SCOPE)
+    }
+
     /// One community's vault, without any further passkey ceremony.
     /// `fingerprint` is the community's founding-key fingerprint (its identity,
     /// as pinned in [`crate::CommunityPin::fingerprint`]); `scope` is the vault's

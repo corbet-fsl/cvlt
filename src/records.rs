@@ -283,6 +283,11 @@ pub(crate) fn pack_recovery(
     Ok(padded)
 }
 
+/// The sealed payload of a packed record value (either framing), for conflict values.
+pub(crate) fn unpack_sealed(padded: &[u8]) -> Result<Vec<u8>, RecordError> {
+    unpack_recovery(padded).map(|(sealed, _)| sealed.to_vec())
+}
+
 fn unpack_recovery(
     padded: &[u8],
 ) -> Result<(Zeroizing<Vec<u8>>, Option<crate::LineageEvidence>), RecordError> {
