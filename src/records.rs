@@ -227,7 +227,7 @@ impl<B: Backend> std::fmt::Debug for PasskeyRecords<B> {
     }
 }
 
-fn pack(wrapped: &[u8]) -> Result<Zeroizing<Vec<u8>>, RecordError> {
+pub(crate) fn pack(wrapped: &[u8]) -> Result<Zeroizing<Vec<u8>>, RecordError> {
     if wrapped.is_empty() || wrapped.len() > ckmg::MAX_CHECKPOINT_BYTES {
         return Err(RecordError::Limit);
     }

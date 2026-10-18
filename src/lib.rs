@@ -7,6 +7,7 @@ mod credential;
 mod existing;
 mod initial;
 mod lineage;
+mod index_record;
 mod membership_index;
 mod pairing_guest;
 mod read_floors;
@@ -18,6 +19,7 @@ mod update_outbox;
 mod witness_state;
 mod voucher_custody;
 use ckmg::{Authority, Clock, Entropy, Locator};
+pub use index_record::TorIndexRecord;
 pub use membership_index::{
     IndexError, IndexRecord, MEMBERSHIP_SCOPE, MembershipEntry, MembershipIndex, Observed, Outcome,
     WalletIndexRecord, add_entry, read_index,
