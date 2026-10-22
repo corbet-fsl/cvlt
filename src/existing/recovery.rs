@@ -31,6 +31,8 @@ impl PreparedOpen {
     /// Charter observation here is never an accepting cache or lease.
     /// A device-key member's checkpoint carries stamp genesis evidence: it verifies only
     /// with the wallet's stamp trust (`stamps`), at the receipt's signed time.
+    /// Wallet birth evidence refuses here with `Scope`: it is restored only through
+    /// [`Self::prepare_wallet_recovery`], which also checks the restoring device.
     pub fn prepare_recovery(
         self,
         checkpoint: &RecordCheckpoint,
@@ -40,9 +42,46 @@ impl PreparedOpen {
         now: u64,
     ) -> Result<RecoveryCandidate, OpenError> {
         let evidence = checkpoint.evidence().ok_or(OpenError::RecoveryRequired)?;
+        if evidence.is_birth() {
+            return Err(OpenError::Evidence(crate::LineageError::Scope));
+        }
         let observed = evidence
             .verify_for(current, stamps, expected_member, now)
             .map_err(OpenError::Evidence)?;
+        self.recovery_candidate(checkpoint, evidence, &observed, now)
+    }
+
+    /// The wallet twin of [`Self::prepare_recovery`] for a device restoring the wallet with
+    /// the passkey `credential` it just signed in with. Birth evidence is verified offline by
+    /// `cchr::verify_birth_genesis` under the current wallet Charter, and the statement must
+    /// name exactly that credential and this opening's derived device key. Passkey evidence
+    /// must have been verified by the same credential.
+    pub fn prepare_wallet_recovery(
+        self,
+        checkpoint: &RecordCheckpoint,
+        current: &cchr::VerifiedCharter,
+        credential: &[u8],
+        expected_member: &str,
+        now: u64,
+    ) -> Result<RecoveryCandidate, OpenError> {
+        if self.scope != crate::WALLET_SCOPE {
+            return Err(OpenError::Evidence(crate::LineageError::Scope));
+        }
+        let evidence = checkpoint.evidence().ok_or(OpenError::RecoveryRequired)?;
+        let device = self.device()?;
+        let observed = evidence
+            .verify_restoring(current, expected_member, credential, &device, now)
+            .map_err(OpenError::Evidence)?;
+        self.recovery_candidate(checkpoint, evidence, &observed, now)
+    }
+
+    fn recovery_candidate(
+        self,
+        checkpoint: &RecordCheckpoint,
+        evidence: &crate::LineageEvidence,
+        observed: &crate::VerifiedLineageObservation<'_>,
+        now: u64,
+    ) -> Result<RecoveryCandidate, OpenError> {
         let inspection = self.inspect_record(checkpoint)?;
         if inspection.lineage() != observed.lineage(now).map_err(OpenError::Evidence)? {
             return Err(OpenError::Keys(ckmg::Error::Unauthorized));

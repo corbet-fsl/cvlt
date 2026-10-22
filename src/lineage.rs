@@ -58,7 +58,14 @@ pub struct VerifiedLineageObservation<'a> {
 /// member's first lineage only) a wallet confirmation stamp under the member's pseudonym.
 enum Authority<'a> {
     Passkey(VerifiedPasskeyCertificate<'a>),
-    Stamp { digest: [u8; 32] },
+    Stamp {
+        digest: [u8; 32],
+    },
+    /// Wallet lineage only: the wallet-signed birth statement (one-ceremony registration),
+    /// naming the passkey credential whose creation ceremony authorized the genesis.
+    Birth {
+        credential: Vec<u8>,
+    },
 }
 impl<'a> VerifiedLineageObservation<'a> {
     pub(crate) fn stamped(
@@ -73,6 +80,25 @@ impl<'a> VerifiedLineageObservation<'a> {
             },
             lineage: genesis.lineage(),
             author: *genesis.author(),
+            checked_at: now,
+        }
+    }
+}
+impl<'a> VerifiedLineageObservation<'a> {
+    // Birth genesis evidence (wallet scope only), verified offline by Charter under the
+    // wallet key ring of `charter` at the statement time.
+    pub(crate) fn born(
+        charter: &'a VerifiedCharter,
+        birth: &cchr::VerifiedBirth<'a>,
+        now: u64,
+    ) -> Self {
+        Self {
+            charter,
+            authority: Authority::Birth {
+                credential: birth.statement().credential().to_vec(),
+            },
+            lineage: birth.lineage(),
+            author: *birth.device(),
             checked_at: now,
         }
     }
@@ -96,6 +122,16 @@ impl VerifiedLineageObservation<'_> {
                     return Err(LineageError::Policy(cchr::Error::Unauthenticated));
                 }
             }
+            Authority::Birth { credential } => {
+                let revocations = self.charter.revocations();
+                if revocations.member_revoked(self.lineage.binding.member())
+                    || revocations
+                        .passkey_revoked(credential)
+                        .map_err(LineageError::Policy)?
+                {
+                    return Err(LineageError::Policy(cchr::Error::Unauthenticated));
+                }
+            }
         }
         Ok(())
     }
@@ -113,7 +149,8 @@ impl VerifiedLineageObservation<'_> {
     }
     /// Exact original credential which verified this receipt assertion. This is
     /// public identity within the same current owner cut, never new authority.
-    /// Genesis evidence by stamp has no passkey credential and refuses with `Scope`.
+    /// Genesis evidence by stamp has no passkey credential and refuses with `Scope`. Birth
+    /// evidence returns the credential its wallet-signed statement names.
     pub fn credential_id(&self, now: u64) -> Result<&[u8], LineageError> {
         self.live(now)?;
         match &self.authority {
@@ -121,6 +158,7 @@ impl VerifiedLineageObservation<'_> {
                 certificate.credential_id(now).map_err(LineageError::Policy)
             }
             Authority::Stamp { .. } => Err(LineageError::Scope),
+            Authority::Birth { credential } => Ok(credential),
         }
     }
     /// The one-use digest of the genesis stamp (its action digest), the authority reference of
@@ -128,16 +166,17 @@ impl VerifiedLineageObservation<'_> {
     pub fn stamp_digest(&self, now: u64) -> Result<[u8; 32], LineageError> {
         self.live(now)?;
         match &self.authority {
-            Authority::Passkey(_) => Err(LineageError::Scope),
+            Authority::Passkey(_) | Authority::Birth { .. } => Err(LineageError::Scope),
             Authority::Stamp { digest } => Ok(*digest),
         }
     }
     /// Exclusive bound from the original binding and complete Charter lifetimes. Stamp evidence
-    /// is bounded by the Charter alone: the stamp's own expiry was judged at the receipt time.
+    /// and birth evidence are bounded by the Charter alone: their own validity was judged at the
+    /// receipt (statement) time.
     pub fn valid_until(&self) -> u64 {
         match &self.authority {
             Authority::Passkey(certificate) => certificate.valid_until(),
-            Authority::Stamp { .. } => self.charter.valid_until(),
+            Authority::Stamp { .. } | Authority::Birth { .. } => self.charter.valid_until(),
         }
     }
     /// Original Charter revision consulted by this observation, not a lineage epoch.

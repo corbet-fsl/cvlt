@@ -586,6 +586,40 @@ impl<B: Backend> InitialCreation<B> {
         Ok(self)
     }
 
+    /// The wallet-scope twin of [`Self::prepare`] for a one-ceremony registration: the
+    /// genesis evidence is the wallet-signed birth statement (`wallet_birth_genesis`) instead
+    /// of a passkey assertion. It is verified under the current wallet Charter, must anchor
+    /// this pending receipt, must name this creation's derived device key and its enrollment
+    /// seed commitment, and refuses for any community scope.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn prepare_birth(
+        self,
+        current: &cchr::VerifiedCharter,
+        evidence: cchr::BirthGenesisEvidence,
+        expected_member: &str,
+        expires: u64,
+        clock: &mut impl Clock,
+        entropy: &mut impl Entropy,
+    ) -> Result<Self, InitialError> {
+        if self.opening.scope != crate::WALLET_SCOPE {
+            return Err(InitialError::Invalid);
+        }
+        let now = clock.now().map_err(InitialError::Keys)?;
+        let device = self.opening.device().map_err(InitialError::Open)?;
+        let commitment = self.enrollment_commitment()?;
+        let prepared = crate::LineageEvidence::prepare_birth_with(
+            current,
+            evidence,
+            expected_member,
+            now,
+            |statement| {
+                statement.device() == device.value() && statement.commitment() == &commitment
+            },
+        )
+        .map_err(|_| InitialError::Invalid)?;
+        self.prepare(&prepared, expires, clock, entropy).await
+    }
+
     /// Read only the exact committed original outputs. Reopening never signs
     /// anew or manufactures another nonce, deadline, receipt or creation root.
     pub fn retained(&self) -> Result<RetainedGenesis, InitialError> {
