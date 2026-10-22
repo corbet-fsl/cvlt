@@ -114,15 +114,11 @@ impl RecoveryCandidate {
     /// PRF-authenticated original initial ACK signs; it grants nothing new: without a fresh
     /// wallet stamp the community only re-confirms that same applied join.
     pub fn sign_device_join(&self, payload: &[u8]) -> Result<[u8; 64], OpenError> {
-        if self.initial.is_none() {
-            return Err(OpenError::RecoveryRequired);
-        }
-        ckmg::passkey::sign_device_join_restored(
-            &self.opening.prf,
-            &self.opening.scope,
-            payload,
-        )
-        .map_err(OpenError::Keys)
+        self.initial
+            .as_ref()
+            .ok_or(OpenError::RecoveryRequired)?
+            .sign_device_join_restored(&self.opening.prf, &self.opening.scope, payload)
+            .map_err(OpenError::Keys)
     }
 
     /// Borrow only the approved provisional lineage read key for this attempt.
