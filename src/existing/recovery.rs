@@ -109,6 +109,22 @@ impl RecoveryCandidate {
             .ok_or(OpenError::RecoveryRequired)
     }
 
+    /// The device key's `DeviceJoin` signature for the restored device's re-confirmation of
+    /// the join the community already applied (`initial_seed`). Only a candidate holding the
+    /// PRF-authenticated original initial ACK signs; it grants nothing new: without a fresh
+    /// wallet stamp the community only re-confirms that same applied join.
+    pub fn sign_device_join(&self, payload: &[u8]) -> Result<[u8; 64], OpenError> {
+        if self.initial.is_none() {
+            return Err(OpenError::RecoveryRequired);
+        }
+        ckmg::passkey::sign_device_join_restored(
+            &self.opening.prf,
+            &self.opening.scope,
+            payload,
+        )
+        .map_err(OpenError::Keys)
+    }
+
     /// Borrow only the approved provisional lineage read key for this attempt.
     /// Current policy and fresh HTTPS are rechecked by the supplied original
     /// recovery authority. Drop the reader before consuming/dropping the attempt.
