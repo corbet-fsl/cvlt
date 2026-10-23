@@ -1,0 +1,23 @@
+[package]
+name = "cvlt-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "LGPL-3.0-only WITH LGPL-3.0-linking-exception"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+cvlt = { path = ".." }
+
+[[bin]]
+name = "lineage_evidence"
+path = "fuzz_targets/lineage_evidence.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
