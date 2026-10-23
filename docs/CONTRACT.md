@@ -34,7 +34,9 @@ data restore remains unaccepted until real cdht and holder adapters run together
 
 Wallet remains a borrowed owner capability supplied by accounting. There is no
 substitute proof success path. Keys derives the global passport holder seed; Wallet holds the passport and
-operates Pseudonyms' holder side. These owner integrations are pending.
+operates Pseudonyms' holder side. Behind the non-default `wallet` feature, `WalletCustody`
+restores the `cwlt` passport, record and account owners from the authenticated checkpoint;
+the end-to-end integration with the real Wallet and accounting owners is pending.
 
 Every enrolled passkey is equal. Keys must retain a random common identity root
 as separate authenticated wrapped copies under each passkey in member DHT records.
@@ -49,14 +51,27 @@ HTTP/WebAuthn/network code, raw root export, operator backup or duplicated domai
 state is introduced. `lock` wipes Keys and shared decrypted Storage immediately;
 existing shared container references then receive Locked from Storage.
 
-`open_existing` is a consume-only local opening path. It never calls Store create,
-Keys create_scope, Records lookup or a Wallet constructor. The original UnlockSecret
-is consumed into PrfOutput once; the borrowed opaque PRF feeds original store_cipher
-and Keys.unlock without cloning/export. A current Keys.lineage/Authority check is
-mandatory before the Vault returns. On error or cancellation, the owned Store and
-Keys are dropped and their original secret owners wipe unlocked material; no
-accepted checkpoint mutation or output was prepared. This does not make missing
-production G3, equal-root replication or full restore composition available.
+`Vault::open_existing(backend, unlock, scope, owners)` is a compatibility refusal for
+the unpublished PRF-only open: it builds `PreparedOpen` and returns
+`OpenError::RecoveryRequired` without accessing the Backend. The consume-only local
+opening path is `PreparedOpen::prepare_recovery` (or `prepare_initial_recovery`),
+`RecoveryCandidate::authorize`, then `PreparedRecovery::open_existing`. It never
+calls Store create, Keys create_scope or a Wallet constructor; a missing checkpoint is
+`MissingCheckpoint`, never a creation. The original UnlockSecret is consumed into
+PrfOutput once by `PreparedOpen::new`; the borrowed opaque PRF feeds Keys.unlock
+without cloning/export. `prepare_recovery` verifies the recovery record's evidence
+against the current Charter and `authorize` obtains current member authority from
+the Authority. `PreparedRecovery::open_existing` checks that authority again, opens
+the existing local Store under the common-root store cipher and requires its Keys
+checkpoint to be the verified record's. When the Store holds a read-floor carrier, it
+installs the floors in Records and requires `Records::lookup` to return that same
+checkpoint (else `RecordError::Unavailable`). It then unlocks Keys and requires
+Keys.lineage to equal the authorized lineage before the Vault returns. On error or
+cancellation, the owned Store and Keys are dropped and their original secret owners
+wipe unlocked material. `PreparedOpen::migrate_legacy` is the separate, explicit path
+that authenticates the unpublished PRF-wrapped Store and moves it under the common
+root in one fenced write. This does not make missing production G3, equal-root
+replication or full restore composition available.
 
 `PreparedOpen` retains the consumed original opaque PRF during owner construction.
 Its local locator is distinct from the canonical network record key. With the

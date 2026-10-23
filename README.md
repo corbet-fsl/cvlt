@@ -18,8 +18,11 @@ community stores; infers absence or creates an identity during restore. Keys own
 lineage and derives the passport holder seed. Wallet holds the passport and makes
 presentations with Pseudonyms' holder engine.
 
-**States and ports.** Derived Locked, Ready, Restoring, Unavailable or Unrecoverable.
-Missing PRF leaves the vault Locked independently of server sign-in. The implemented
+**States and ports.** Intended derived states: Locked, Ready, Restoring, Unavailable
+or Unrecoverable. Not yet implemented: this crate defines no type or variant of those
+names. Today the Vault carries no state of its own: no Vault exists before an opening
+succeeds, `lock` consumes it, and Keys reports its own `ckmg::State`. Missing PRF
+leaves the vault Locked independently of server sign-in. The implemented
 ports lend Keys, shared Storage, staged compound batches, Records lookup and Wallet,
 and provide `lock`. Restore distinguishes Present, KnownAbsent and Unavailable.
 Full unlock/restore wiring depends on the corresponding owner capabilities.
@@ -46,8 +49,11 @@ companion changes and outputs under one storage fence. Staging never reports
 durable success. Cancellation, conflicts and unknown outcomes reconcile through
 the owner. Keys' pending receipt remains inside its sealed checkpoint.
 
-Records, Wallet, live G3 authority, equal-passkey root custody and the browser
-iframe ceremony are pending owner integrations. Opening a local Keys checkpoint
+Records adapters (`PasskeyRecords`, `TorPasskeyRecord`, `CompoundRecords`) and,
+behind the non-default `wallet` feature, Wallet custody (`WalletCustody` over the
+`cwlt` passport, record and account owners) exist in this crate; their end-to-end use
+with the real owners is not accepted. Live G3 authority, equal-passkey root custody
+and the browser iframe ceremony are pending owner integrations. Opening a local Keys checkpoint
 does not demonstrate equal-passkey custody or restore. No permissive authority or
 proof engine is supplied. The decided custody and restore rules above are requirements, not
 claims that these missing integrations already pass.
@@ -61,13 +67,20 @@ Independent acceptance review remains required.
 
 ## Existing checkpoint handover
 
-`Vault::open_existing` consumes the original Passkeys `UnlockSecret` through
-Keys' opaque PRF importer, opens the existing encrypted Store, unlocks its Keys
-checkpoint, then asks Keys to validate current lineage through the supplied
-Authority. `Owners` groups the original Clock, Entropy, Authority, Records and
-Wallet capabilities; it creates none of them. No secret or plaintext key is
-returned. Missing/corrupt/unavailable state refuses without creating a Store,
-root or replacement identity, and the path performs no checkpoint writes.
+`PreparedOpen::new` consumes the original Passkeys `UnlockSecret` through Keys'
+opaque PRF importer. `Vault::open_existing` with a bare unlock secret is only a
+compatibility refusal for the unpublished PRF-only open: it returns
+`OpenError::RecoveryRequired` without accessing storage. The restore path is
+`PreparedOpen::prepare_recovery` with the retained recovery record, then
+`RecoveryCandidate::authorize` (current member authority from the supplied
+Authority), then `PreparedRecovery::open_existing`: it opens the existing local
+Store under the common-root cipher, requires its Keys checkpoint to be the
+verified record's, unlocks Keys and validates that the current lineage equals
+the authorized one. `PreparedOpen::migrate_legacy` is the separate, explicit path
+for the unpublished PRF-wrapped Store. `Owners` groups the original Clock,
+Entropy, Authority, Records and Wallet capabilities; it creates none of them. No
+secret or plaintext key is returned. Missing/corrupt/unavailable state refuses
+without creating a Store, root or replacement identity.
 Later Keys operations still check their own current authority.
 
 This is a local prerequisite, not production login or restored custody. The real
