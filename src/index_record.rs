@@ -60,9 +60,18 @@ impl<N: cdht::Network> TorIndexRecord<N> {
 }
 
 impl<N: cdht::Network> IndexRecord for TorIndexRecord<N> {
+    /// Only a value that the read target's holders agree on counts (the agreement
+    /// `cdht::ReadReport::has_consensus` demands, as the passkey records do): a value from a
+    /// single, stale or eclipsing holder set reads as unavailable, never as the index.
     async fn read(&mut self) -> Option<Observed> {
         self.dht.open(&self.key).await.ok()?;
-        let value = self.dht.get_signed_fresh(&self.key, 0).await.ok()??;
+        let report = self.dht.backend().read(&self.key, 0).await.ok()?;
+        if !report.has_consensus() {
+            return None;
+        }
+        let value = report.value?;
+        // Validates the value and keeps this handle's sequence floor (a lower value refuses).
+        self.dht.observe_original(&self.key, 0, &value).ok()?;
         let sealed = self.sealed_of(&value).ok()?;
         Some(Observed {
             sequence: value.seq,
@@ -126,16 +135,24 @@ mod tests {
     use ckmg::passkey::{PrfOutput, passkey_record_writer, store_cipher};
     use std::rc::Rc;
 
-    /// Five validating nodes in process; only the transport is local.
+    /// Five validating nodes in process; only the transport is local. `reach` limits the
+    /// holders this view of the network contacts (a lone or eclipsed holder set).
     #[derive(Clone)]
-    struct Nodes(Rc<Vec<cdht::LocalBackend<crate::records::tor::Verifier>>>);
+    struct Nodes(Rc<Vec<cdht::LocalBackend<crate::records::tor::Verifier>>>, u8);
     impl Nodes {
         fn new() -> Self {
-            Self(Rc::new(
-                (0..5)
-                    .map(|_| cdht::LocalBackend::new(crate::records::tor::Verifier))
-                    .collect(),
-            ))
+            Self(
+                Rc::new(
+                    (0..5)
+                        .map(|_| cdht::LocalBackend::new(crate::records::tor::Verifier))
+                        .collect(),
+                ),
+                5,
+            )
+        }
+        /// The same nodes, reaching only the first `reach` of them.
+        fn reaching(&self, reach: u8) -> Self {
+            Self(self.0.clone(), reach)
         }
         fn node(&self, node: &cdht::NodeId) -> Result<&cdht::LocalBackend<crate::records::tor::Verifier>, cdht::Error> {
             self.0.get(usize::from(node[0])).ok_or(cdht::Error::Unavailable)
@@ -146,7 +163,7 @@ mod tests {
             1
         }
         async fn closest(&self, _: &cdht::RecordKey) -> Result<Vec<cdht::NodeId>, cdht::Error> {
-            Ok((0..5).map(|index| [index; 32]).collect())
+            Ok((0..self.1).map(|index| [index; 32]).collect())
         }
         async fn descriptor(
             &self,
@@ -219,6 +236,44 @@ mod tests {
             assert_eq!(add_entry(&mut blind, &c, &mut rng, third.clone()).await, Ok(Outcome::Confirmed));
             let (_, index) = read_index(&mut fresh, &c).await.unwrap().unwrap();
             assert_eq!(index.len(), 3);
+        });
+    }
+
+    /// X1 M2: a value held by a single node is not the index. Reading it is "unavailable"
+    /// (never the index, never absence), and `add_entry` does not report `Confirmed` from it:
+    /// it republishes until the agreeing holders list the entry.
+    #[test]
+    fn a_single_holder_value_neither_reads_nor_confirms() {
+        let network = Nodes::new();
+        let (c, mut rng) = (cipher(11), ckmg::SystemEntropy);
+        futures_executor::block_on(async {
+            let entry = MembershipEntry::new("garden.example", [1; 32]).unwrap();
+            // A device that reaches only one holder writes the entry there alone.
+            let mut lone = handle(&network.reaching(1), 11);
+            let _ = add_entry(&mut lone, &c, &mut rng, entry.clone()).await;
+            // A device reaching all holders sees no agreement: unavailable, not the index.
+            let mut fresh = handle(&network, 11);
+            assert!(matches!(read_index(&mut fresh, &c).await, Ok(None)));
+            // Adding the same entry republishes it to every holder; the composer asks again
+            // while it is only queued, and `Confirmed` comes only with agreeing holders.
+            let mut full = handle(&network, 11);
+            let mut confirmed = false;
+            for _ in 0..3 {
+                match add_entry(&mut full, &c, &mut rng, entry.clone()).await {
+                    Ok(Outcome::Confirmed) => {
+                        confirmed = true;
+                        break;
+                    }
+                    Ok(Outcome::Queued) => {}
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+            assert!(confirmed);
+            let report = full.dht.backend().read(&full.key, 0).await.unwrap();
+            assert!(report.has_consensus());
+            let mut after = handle(&network, 11);
+            let (_, index) = read_index(&mut after, &c).await.unwrap().unwrap();
+            assert!(index.contains(&entry));
         });
     }
 }

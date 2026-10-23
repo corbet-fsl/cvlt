@@ -224,7 +224,8 @@ pub struct Observed {
 
 /// What the loop needs from a record. [`PasskeyRecords`] is the product implementation.
 pub trait IndexRecord {
-    /// Forced read; `None` when unavailable (never "absent").
+    /// Forced read of a value the record's holders agree on; `None` when unavailable or
+    /// without that agreement (never "absent").
     fn read(&mut self) -> impl std::future::Future<Output = Option<Observed>>;
     /// Publish `sealed` at `sequence`. `Err(winner)` is a lost swap with the winning value.
     fn publish(
@@ -310,8 +311,14 @@ pub async fn add_entry(
             Err(Ok(winner)) => {
                 // Lost the swap: merge the winner (it may hold other devices' entries).
                 let theirs = MembershipIndex::open(cipher, &winner.sealed)?;
-                if theirs.contains(&entry) {
-                    // The winner already lists it (replicated state we read back).
+                // A lost swap's winner is one holder's answer, not replication: it confirms
+                // only when an agreeing read lists the entry. Otherwise the loop republishes
+                // the winner (with the entry) one sequence higher, so every holder gets it.
+                if theirs.contains(&entry)
+                    && read_index(record, cipher)
+                        .await?
+                        .is_some_and(|(_, index)| index.contains(&entry))
+                {
                     return Ok(Outcome::Confirmed);
                 }
                 let mut merged = theirs;
@@ -493,6 +500,35 @@ mod tests {
         let (sequence, index) = futures_executor::block_on(read_index(&mut record, &c)).unwrap().unwrap();
         assert_eq!(sequence, 5);
         assert!(index.contains(&entry("old.example", 7)) && index.contains(&entry("new.example", 8)));
+    }
+
+    /// X1 M2: a lost swap's winner that already lists the entry is one holder's answer. It
+    /// confirms only through an agreeing read; without one the winner is republished one
+    /// sequence higher (entry included), so the confirmation rests on the new replication.
+    #[test]
+    fn a_winner_without_an_agreeing_read_is_republished_not_confirmed() {
+        let (c, mut rng) = (cipher(7), ckmg::SystemEntropy);
+        let mut existing = MembershipIndex::new();
+        existing.insert(entry("a.example", 1));
+        let mut record = Memory {
+            value: Some((4, existing.seal(&c, &mut rng).unwrap())),
+            readable: false,
+            replicate: true,
+            intruder: None,
+        };
+        let out = futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("a.example", 1)));
+        assert_eq!(out, Ok(Outcome::Confirmed));
+        assert_eq!(record.value.as_ref().map(|(sequence, _)| *sequence), Some(5));
+        // Without replication the republish is only queued: never Confirmed.
+        record.readable = false;
+        record.replicate = false;
+        let out = futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("a.example", 1)));
+        assert_eq!(out, Ok(Outcome::Queued));
+        // An agreeing read that lists it confirms without any write.
+        record.readable = true;
+        let out = futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("a.example", 1)));
+        assert_eq!(out, Ok(Outcome::Confirmed));
+        assert_eq!(record.value.as_ref().map(|(sequence, _)| *sequence), Some(6));
     }
 
     #[test]
