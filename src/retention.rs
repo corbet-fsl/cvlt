@@ -11,7 +11,6 @@ const RECEIPT: &str = "lineage-receipt";
 const ASSERTION: &str = "lineage-assertion";
 const CERTIFICATE: &str = "lineage-certificate";
 const STAMP: &str = "lineage-stamp";
-const BIRTH: &str = "lineage-birth";
 const PASSKEY_PURPOSE: &str = "cvlt.lineage-evidence.v1";
 
 /// Aggregate bound for the three original public evidence values in local Storage.
@@ -44,11 +43,9 @@ impl std::error::Error for EvidenceError {}
 /// Every use must call `verify` inside the actual current Policy borrow.
 /// This container has no network publication format or automatic acknowledgement.
 ///
-/// Three kinds exist: a passkey assertion under the Charter's registration certificate (every
-/// lineage change of a passkey member), a wallet confirmation stamp (a member's FIRST
-/// community lineage only, verified offline with [`StampTrust`] at the receipt's signed time),
-/// and a wallet-signed birth statement (the FIRST wallet lineage of a one-ceremony
-/// registration only, wallet scope only, verified offline by `cchr::verify_birth_genesis`).
+/// Two kinds exist: a passkey assertion under the Charter's registration certificate (every
+/// lineage change of a passkey member), and a wallet confirmation stamp (a member's FIRST
+/// community lineage only, verified offline with [`StampTrust`] at the receipt's signed time).
 pub struct LineageEvidence {
     receipt: Receipt,
     proof: Proof,
@@ -60,45 +57,6 @@ enum Proof {
     },
     /// Charter's public genesis stamp evidence (its wire bytes are this evidence's bytes).
     Stamp(Box<GenesisStampEvidence>),
-    /// Charter's public birth genesis evidence (its wire bytes are this evidence's bytes).
-    Birth(Box<cchr::BirthGenesisEvidence>),
-}
-
-/// Map a fixed birth refusal onto the fixed lineage refusals, carrying no supplied values.
-fn birth_error(error: cchr::BirthError) -> LineageError {
-    match error {
-        cchr::BirthError::Statement => LineageError::Policy(cchr::Error::Signature),
-        cchr::BirthError::Scope | cchr::BirthError::Restore => LineageError::Scope,
-        cchr::BirthError::Clock => LineageError::Clock,
-        cchr::BirthError::Receipt
-        | cchr::BirthError::Device
-        | cchr::BirthError::Digest
-        | cchr::BirthError::Invalid
-        | cchr::BirthError::Limit => LineageError::Receipt,
-    }
-}
-
-/// Verify birth evidence under the current wallet Charter: wallet scope only, its key ring
-/// (issuer `wallet`) and its fingerprint, judged at the statement time.
-fn verify_birth<'a>(
-    current: &'a cchr::VerifiedCharter,
-    birth: &'a cchr::BirthGenesisEvidence,
-    expected_member: &str,
-    now: u64,
-) -> Result<(VerifiedLineageObservation<'a>, cchr::VerifiedBirth<'a>), LineageError> {
-    if current.community() != crate::WALLET_SCOPE {
-        return Err(LineageError::Scope);
-    }
-    let wallet = current
-        .fingerprint()
-        .copied()
-        .unwrap_or_else(|| cchr::wallet_fingerprint(None));
-    let verified =
-        cchr::verify_birth_genesis(current.key_ring(), birth, &wallet, expected_member, now)
-            .map_err(birth_error)?;
-    let observation = VerifiedLineageObservation::born(current, &verified, now);
-    observation.lineage(now)?;
-    Ok((observation, verified))
 }
 /// Local Storage value of genesis stamp evidence beside the receipt: the presentation of the
 /// `lineage_genesis` slot, the device's salt of that slot (public once presented) and the time
@@ -112,8 +70,8 @@ struct StampProof {
 }
 impl StampProof {
     fn evidence(self, receipt: &Receipt) -> Result<GenesisStampEvidence, EvidenceError> {
-        let presentation = StampPresentation::from_bytes(&self.presentation)
-            .map_err(|_| EvidenceError::Invalid)?;
+        let presentation =
+            StampPresentation::from_bytes(&self.presentation).map_err(|_| EvidenceError::Invalid)?;
         Ok(GenesisStampEvidence::new(
             receipt.clone(),
             &presentation,
@@ -208,8 +166,6 @@ impl LineageEvidence {
             }
             // Charter owns the stamp evidence wire, so the server decodes these exact bytes.
             Proof::Stamp(stamp) => stamp.to_bytes().map_err(|_| EvidenceError::Invalid)?,
-            // Charter owns the birth evidence wire as well.
-            Proof::Birth(birth) => birth.to_bytes().map_err(|_| EvidenceError::Invalid)?,
         };
         if bytes.len() > MAX_LINEAGE_EVIDENCE_BYTES {
             return Err(EvidenceError::Limit);
@@ -233,11 +189,6 @@ impl LineageEvidence {
                     assertion: wire.assertion,
                     certificate: wire.certificate,
                 },
-            }
-        } else if let Ok(birth) = cchr::BirthGenesisEvidence::from_bytes(bytes) {
-            Self {
-                receipt: birth.receipt().clone(),
-                proof: Proof::Birth(Box::new(birth)),
             }
         } else {
             let stamp =
@@ -340,55 +291,6 @@ impl LineageEvidence {
         Ok(PreparedLineageEvidence(value))
     }
 
-    /// Capture birth genesis evidence for the FIRST wallet lineage of a one-ceremony
-    /// registration (the receipt plus the wallet-signed `BirthStatement` from
-    /// `wallet_birth_genesis`). Wallet scope only: any community Charter refuses with `Scope`.
-    /// Verified within one synchronous current Policy borrow; no authority across awaits.
-    pub fn prepare_birth(
-        current: &cchr::VerifiedCharter,
-        evidence: cchr::BirthGenesisEvidence,
-        expected_member: &str,
-        now: u64,
-    ) -> Result<PreparedLineageEvidence, EvidenceError> {
-        Self::prepare_birth_with(current, evidence, expected_member, now, |_| true)
-    }
-
-    // `prepare_birth` with an extra synchronous check of the verified statement.
-    pub(crate) fn prepare_birth_with(
-        current: &cchr::VerifiedCharter,
-        evidence: cchr::BirthGenesisEvidence,
-        expected_member: &str,
-        now: u64,
-        check: impl FnOnce(&cchr::BirthStatement) -> bool,
-    ) -> Result<PreparedLineageEvidence, EvidenceError> {
-        let (_, verified) = verify_birth(current, &evidence, expected_member, now)
-            .map_err(EvidenceError::Evidence)?;
-        if !check(verified.statement()) {
-            return Err(EvidenceError::Invalid);
-        }
-        drop(verified);
-        let value = Self {
-            receipt: evidence.receipt().clone(),
-            proof: Proof::Birth(Box::new(evidence)),
-        };
-        value.encoded()?;
-        Ok(PreparedLineageEvidence(value))
-    }
-
-    /// Whether this is wallet birth genesis evidence.
-    pub fn is_birth(&self) -> bool {
-        matches!(self.proof, Proof::Birth(_))
-    }
-
-    /// The Charter birth genesis evidence inside, if this is birth evidence: what a device
-    /// sends with its first wallet publication bind (`BirthGenesisEvidence::to_bytes`).
-    pub fn birth_genesis(&self) -> Option<&cchr::BirthGenesisEvidence> {
-        match &self.proof {
-            Proof::Birth(birth) => Some(birth),
-            Proof::Passkey { .. } | Proof::Stamp(_) => None,
-        }
-    }
-
     /// Whether this is genesis evidence by stamp (which needs [`StampTrust`] to verify).
     pub fn is_stamp(&self) -> bool {
         matches!(self.proof, Proof::Stamp(_))
@@ -399,7 +301,7 @@ impl LineageEvidence {
     pub fn genesis_stamp(&self) -> Option<&GenesisStampEvidence> {
         match &self.proof {
             Proof::Stamp(stamp) => Some(stamp),
-            Proof::Passkey { .. } | Proof::Birth(_) => None,
+            Proof::Passkey { .. } => None,
         }
     }
 
@@ -410,8 +312,7 @@ impl LineageEvidence {
 
     /// Reverify all original evidence against the current Charter and clock. Stamp evidence
     /// needs the stamp trust and refuses here as `Policy(Unavailable)`; use
-    /// [`Self::verify_with_stamps`]. Birth evidence verifies under the current wallet Charter
-    /// (wallet scope only); a restoring device must use [`Self::verify_restoring`] instead.
+    /// [`Self::verify_with_stamps`].
     pub fn verify<'a>(
         &'a self,
         current: &'a cchr::VerifiedCharter,
@@ -431,39 +332,6 @@ impl LineageEvidence {
                 now,
             ),
             Proof::Stamp(_) => Err(LineageError::Policy(cchr::Error::Unavailable)),
-            Proof::Birth(birth) => verify_birth(current, birth, expected_member, now)
-                .map(|(observation, _)| observation),
-        }
-    }
-
-    /// Reverify evidence for a device restoring the wallet: birth evidence additionally must
-    /// name exactly the passkey `credential` this device just signed in with and the wallet
-    /// device key `device` it derived from that sign-in (refused with `Scope` otherwise). Passkey
-    /// evidence must have been verified by that same credential. Stamp evidence refuses.
-    pub fn verify_restoring<'a>(
-        &'a self,
-        current: &'a cchr::VerifiedCharter,
-        expected_member: &str,
-        credential: &[u8],
-        device: &ckmg::PublicKey,
-        now: u64,
-    ) -> Result<VerifiedLineageObservation<'a>, LineageError> {
-        match &self.proof {
-            Proof::Birth(birth) => {
-                let (observation, verified) = verify_birth(current, birth, expected_member, now)?;
-                verified
-                    .check_restoring(credential, device.value())
-                    .map_err(birth_error)?;
-                Ok(observation)
-            }
-            Proof::Passkey { .. } => {
-                let observation = self.verify(current, expected_member, now)?;
-                if observation.credential_id(now)? != credential {
-                    return Err(LineageError::Scope);
-                }
-                Ok(observation)
-            }
-            Proof::Stamp(_) => Err(LineageError::Scope),
         }
     }
 
@@ -478,7 +346,7 @@ impl LineageEvidence {
         now: u64,
     ) -> Result<VerifiedLineageObservation<'a>, LineageError> {
         match &self.proof {
-            Proof::Passkey { .. } | Proof::Birth(_) => self.verify(current, expected_member, now),
+            Proof::Passkey { .. } => self.verify(current, expected_member, now),
             Proof::Stamp(stamp) => {
                 let genesis = crate::lineage::verify_genesis(
                     current,
@@ -549,23 +417,6 @@ impl LineageEvidence {
         self.verify_with_stamps(current, stamps, expected_member, now)
     }
 
-    // The birth twin of `reauthorize_initial`: birth evidence verified at NOW against the
-    // current wallet Charter, plus the restoring device's credential and device key check.
-    // Passkey and stamp evidence refuse with `Scope`.
-    pub(crate) fn reauthorize_initial_birth<'a>(
-        &'a self,
-        current: &'a cchr::VerifiedCharter,
-        expected_member: &str,
-        credential: &[u8],
-        device: &ckmg::PublicKey,
-        now: u64,
-    ) -> Result<VerifiedLineageObservation<'a>, LineageError> {
-        if !self.is_birth() {
-            return Err(LineageError::Scope);
-        }
-        self.verify_restoring(current, expected_member, credential, device, now)
-    }
-
     /// Load three original public values from authenticated local Storage. This
     /// grants no currentness: `verify` remains mandatory at every point of use.
     /// An absent triple is None; partial/corrupt triples are refused.
@@ -585,12 +436,9 @@ impl LineageEvidence {
         let stamp = store
             .read(STAMP, operation)
             .map_err(EvidenceError::Storage)?;
-        let birth = store
-            .read(BIRTH, operation)
-            .map_err(EvidenceError::Storage)?;
-        let value = match (receipt, assertion, certificate, stamp, birth) {
-            (None, None, None, None, None) => return Ok(None),
-            (Some(receipt), Some(assertion), Some(certificate), None, None) => {
+        let value = match (receipt, assertion, certificate, stamp) {
+            (None, None, None, None) => return Ok(None),
+            (Some(receipt), Some(assertion), Some(certificate), None) => {
                 bound(receipt.len(), assertion.len(), certificate.len())?;
                 Self {
                     receipt: serde_json::from_slice(receipt).map_err(|_| EvidenceError::Invalid)?,
@@ -601,7 +449,7 @@ impl LineageEvidence {
                     },
                 }
             }
-            (Some(receipt), None, None, Some(stamp), None) => {
+            (Some(receipt), None, None, Some(stamp)) => {
                 bound(receipt.len(), stamp.len(), 0)?;
                 let receipt: Receipt =
                     serde_json::from_slice(receipt).map_err(|_| EvidenceError::Invalid)?;
@@ -609,20 +457,6 @@ impl LineageEvidence {
                     serde_json::from_slice(stamp).map_err(|_| EvidenceError::Invalid)?;
                 Self {
                     proof: Proof::Stamp(Box::new(stamp.evidence(&receipt)?)),
-                    receipt,
-                }
-            }
-            (Some(receipt), None, None, None, Some(birth)) => {
-                bound(receipt.len(), birth.len(), 0)?;
-                let receipt: Receipt =
-                    serde_json::from_slice(receipt).map_err(|_| EvidenceError::Invalid)?;
-                let birth = cchr::BirthGenesisEvidence::from_bytes(birth)
-                    .map_err(|_| EvidenceError::Invalid)?;
-                if birth.receipt() != &receipt {
-                    return Err(EvidenceError::Invalid);
-                }
-                Self {
-                    proof: Proof::Birth(Box::new(birth)),
                     receipt,
                 }
             }
@@ -670,11 +504,6 @@ impl LineageEvidence {
                 .map_err(|_| EvidenceError::Invalid)?;
                 bound(receipt.len(), stamp.len(), 0)?;
                 Ok(vec![(RECEIPT, receipt), (STAMP, stamp)])
-            }
-            Proof::Birth(birth) => {
-                let birth = birth.to_bytes().map_err(|_| EvidenceError::Invalid)?;
-                bound(receipt.len(), birth.len(), 0)?;
-                Ok(vec![(RECEIPT, receipt), (BIRTH, birth)])
             }
         }
     }
