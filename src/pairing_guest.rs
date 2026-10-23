@@ -177,7 +177,29 @@ impl<B: Backend, C: Clock, E: Entropy> PairingGuest<B, C, E> {
         entropy: E,
         request: &PairingRequest,
     ) -> Result<Self, OpenError> {
-        let opening = PreparedOpen::new(unlock, scope)?;
+        Self::reopen_with(
+            PreparedOpen::new(unlock, scope)?,
+            backend,
+            clock,
+            entropy,
+            request,
+        )
+        .await
+    }
+
+    /// Reopen the durable pending request from an opening that was derived inside the
+    /// pairing session (`WalletUnlock::community`), with no further passkey ceremony. Same
+    /// single-use consent as [`Self::reopen`]: it allows only the adoption of exactly
+    /// `request`, and the opening is consumed.
+    pub async fn reopen_with(
+        opening: PreparedOpen,
+        backend: B,
+        clock: C,
+        entropy: E,
+        request: &PairingRequest,
+    ) -> Result<Self, OpenError> {
+        let scope = opening.scope.clone();
+        let scope = scope.as_str();
         if request.binding.community() != scope {
             return Err(OpenError::Composition(Error::Scope));
         }

@@ -275,3 +275,97 @@ fn the_guest_signs_only_pairing_possession_for_its_own_key() {
         accepted.acknowledge().await.unwrap();
     });
 }
+
+async fn live_anchor_in(
+    scope: &str,
+) -> (Keys<Memory, Time, ckmg::SystemEntropy, Live>, ckmg::Lineage) {
+    let mut live = Keys::new(Memory::default(), Time, ckmg::SystemEntropy, Live);
+    let prf = ckmg::passkey::PrfOutput::from_bytes(&[7; 32]).unwrap();
+    let receipt = live
+        .create_scope(&prf, Binding::new(scope, "pseudonym").unwrap(), info(), &[])
+        .await
+        .unwrap();
+    live.acknowledge(receipt.operation).await.unwrap();
+    let anchor = live.lineage().await.unwrap();
+    (live, anchor)
+}
+
+/// ONE passkey ceremony on the new device serves a pairing of several scopes: every opening
+/// (request and adoption) derives from the one session unlock, and every possession
+/// signature of every scope is made without another ceremony.
+#[test]
+fn one_session_unlock_pairs_several_scopes_with_one_ceremony() {
+    futures_executor::block_on(async {
+        let mut client = passkeys().await;
+        // The only passkey ceremony of the whole pairing on this device.
+        let session = cvlt::WalletUnlock::new(unlock(&mut client).await);
+        let scopes = [("alpha", [1u8; 32]), ("beta", [2; 32]), ("gamma", [3; 32])];
+        let mut devices = Vec::new();
+        for (scope, fingerprint) in scopes {
+            let (live, anchor) = live_anchor_in(scope).await;
+            let backend = cwst::backend::Memory::new();
+            let (request, guest) = session
+                .community(&fingerprint, scope)
+                .unwrap()
+                .request_pairing(backend.clone(), &anchor, info(), Time, ckmg::SystemEntropy)
+                .await
+                .unwrap();
+            let device = *request.device.value();
+            let add =
+                ckmg::PairingPossession::new(scope, ckmg::PairingStep::Add, "add", &device)
+                    .unwrap();
+            let add_signature = guest.sign_possession(&add).unwrap();
+            ckmg::verify_ed25519(&device, &add.message(), &add_signature).unwrap();
+            devices.push((scope, fingerprint, backend, request, live, device));
+            drop(guest);
+        }
+        // Every scope has its own device key: no value crosses scopes.
+        assert_ne!(devices[0].5, devices[1].5);
+        assert_ne!(devices[1].5, devices[2].5);
+        for (scope, fingerprint, backend, request, mut live, device) in devices {
+            let receipt = live.authorize_device(&request, &[]).await.unwrap();
+            live.acknowledge(receipt.operation).await.unwrap();
+            let Change::DeviceAuthorized(grant) = receipt.change else {
+                panic!("grant expected");
+            };
+            // Adoption reopens from the same session unlock: no second ceremony.
+            let guest = PairingGuest::reopen_with(
+                session.community(&fingerprint, scope).unwrap(),
+                backend.clone(),
+                Time,
+                ckmg::SystemEntropy,
+                &request,
+            )
+            .await
+            .unwrap();
+            let accepted = guest.accept(&grant).await.unwrap();
+            let activate =
+                ckmg::PairingPossession::new(scope, ckmg::PairingStep::Activate, "act", &device)
+                    .unwrap();
+            let signature = accepted.sign_possession(&activate).unwrap();
+            ckmg::verify_ed25519(&device, &activate.message(), &signature).unwrap();
+            accepted.acknowledge().await.unwrap();
+        }
+        // An opening of another scope's secret cannot adopt this request.
+        let (_live, anchor) = live_anchor_in("alpha").await;
+        let backend = cwst::backend::Memory::new();
+        let (request, guest) = session
+            .community(&[9; 32], "alpha")
+            .unwrap()
+            .request_pairing(backend.clone(), &anchor, info(), Time, ckmg::SystemEntropy)
+            .await
+            .unwrap();
+        drop(guest);
+        assert!(
+            PairingGuest::reopen_with(
+                session.community(&[8; 32], "alpha").unwrap(),
+                backend,
+                Time,
+                ckmg::SystemEntropy,
+                &request,
+            )
+            .await
+            .is_err()
+        );
+    });
+}
