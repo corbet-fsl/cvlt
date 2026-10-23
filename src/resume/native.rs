@@ -1,6 +1,9 @@
 //! Native resume store: the sealed bundle is a file in the device's private vault
 //! directory; its AES-256-GCM wrapping key lives in the OS key store through the
-//! `keyring` crate (feature `os-keyring`), else in a user-only key file (0600) beside it.
+//! `keyring` crate (feature `os-keyring`), else in a user-only key file beside it.
+//! On Unix the files are mode 0600. On Windows (no Credential Manager yet: local versus
+//! roaming persistence is unverified) the protection is the per-user profile ACL of the
+//! vault directory, not a file mode.
 //!
 //! Own glue only: file layout, fallback order and AAD. Sealing is RustCrypto `aes-gcm`,
 //! randomness is `getrandom`, key custody is the platform store.
@@ -155,7 +158,8 @@ impl NativeResume {
     }
 }
 
-/// Write `bytes` to `path` atomically, readable by the user only (0600 on Unix).
+/// Write `bytes` to `path` atomically, readable by the user only: mode 0600 on Unix; on
+/// Windows the per-user profile ACL of the directory is the protection.
 fn write_private(path: &Path, bytes: &[u8]) -> Result<(), ResumeError> {
     let mut suffix = [0; 8];
     getrandom::fill(&mut suffix).map_err(|_| ResumeError::Storage)?;
