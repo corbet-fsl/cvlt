@@ -19,6 +19,7 @@ test = true
 default = []
 wallet = ["dep:cwlt", "ckmg/passport", "ckmg/wallet-engine"]
 wallet-native-prover = ["wallet", "cwlt/native-prover"]
+wallet-browser-prover = ["wallet", "cwlt/browser-prover"]
 native-records = ["ckmg/native-records", "dep:cmsh"]
 # Native persistent unlock keeps its wrapping key in the OS key store (keyring crate).
 os-keyring = ["dep:keyring"]
