@@ -136,6 +136,96 @@ mod native {
             assert!(!store.in_os_keyring());
         });
     }
+
+    /// Headless Linux (no D-Bus session bus, so no Secret Service): the wrapping key lands in the
+    /// user-only file, the unlock round-trips and its files are forgotten, nothing panics and nothing hangs.
+    /// A child process runs the round trip with the bus variables pointed at nothing, so the result
+    /// does not depend on the session of the machine running the suite; the parent bounds it.
+    #[cfg(all(feature = "os-keyring", target_os = "linux"))]
+    #[test]
+    fn headless_without_a_session_bus_falls_back_to_the_key_file() {
+        const DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+        let work = tempfile::tempdir().unwrap();
+        let vault = work.path().join("vault");
+        let empty_runtime_dir = work.path().join("runtime");
+        std::fs::create_dir(&empty_runtime_dir).unwrap();
+        let log = |name| std::fs::File::create(work.path().join(name)).unwrap();
+        let test = format!(
+            "{}::headless_child",
+            module_path!().split_once("::").unwrap().1
+        );
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &test, "--nocapture", "--test-threads=1"])
+            .env_remove("DBUS_SESSION_BUS_ADDRESS")
+            .env_remove("DBUS_SYSTEM_BUS_ADDRESS")
+            .env("XDG_RUNTIME_DIR", &empty_runtime_dir)
+            .env("CVLT_TEST_HEADLESS_VAULT", &vault)
+            .stdout(log("stdout"))
+            .stderr(log("stderr"))
+            .spawn()
+            .unwrap();
+        let started = std::time::Instant::now();
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break Some(status);
+            }
+            if started.elapsed() > DEADLINE {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                break None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        let text = |name| std::fs::read_to_string(work.path().join(name)).unwrap_or_default();
+        let (out, err) = (text("stdout"), text("stderr"));
+        assert!(status.is_some(), "hung past {DEADLINE:?}\n{out}\n{err}");
+        assert!(status.unwrap().success(), "child failed\n{out}\n{err}");
+        assert!(
+            out.contains("1 passed"),
+            "child test did not run\n{out}\n{err}"
+        );
+    }
+
+    /// The child of the headless test: a no-op unless the parent set `CVLT_TEST_HEADLESS_VAULT`.
+    /// The calls run on a tokio worker thread, as cmsg makes them, so a key store backend that
+    /// cannot be called from inside a runtime would panic here.
+    #[cfg(all(feature = "os-keyring", target_os = "linux"))]
+    #[test]
+    fn headless_child() {
+        let Some(vault) = std::env::var_os("CVLT_TEST_HEADLESS_VAULT") else {
+            return;
+        };
+        let vault = std::path::PathBuf::from(vault);
+        let (_, bundle) = futures_executor::block_on(minted());
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .build()
+            .unwrap();
+        runtime.block_on(async move {
+            tokio::spawn(async move {
+                let store = NativeResume::new(
+                    &vault,
+                    b"wallet.example.test\0headless",
+                    Some("cvlt-resume-test-headless"),
+                );
+                store.save(&bundle).unwrap();
+                assert!(!store.in_os_keyring());
+                let key = vault.join("resume.v1.key");
+                let mode = std::os::unix::fs::PermissionsExt::mode(
+                    &std::fs::metadata(&key).unwrap().permissions(),
+                );
+                assert_eq!(mode & 0o777, 0o600);
+                assert!(store.load().is_some());
+                // `forget` reports the unreachable key store as a storage error; the record and
+                // the key file are gone either way, which is what this checks.
+                let _ = store.forget();
+                assert!(store.load().is_none());
+                assert!(!key.exists());
+            })
+            .await
+            .unwrap();
+        });
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
