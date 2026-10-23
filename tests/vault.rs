@@ -3,6 +3,8 @@
 mod existing;
 #[path = "cases/unlock.rs"]
 mod unlock;
+#[path = "cases/resume.rs"]
+mod resume;
 #[cfg(all(feature = "native-records", not(target_arch = "wasm32")))]
 #[path = "cases/records.rs"]
 mod records;

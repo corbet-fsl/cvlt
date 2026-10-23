@@ -12,6 +12,7 @@ mod membership_index;
 mod pairing_guest;
 mod read_floors;
 mod records;
+mod resume;
 mod retention;
 mod storage;
 mod unlock;
@@ -52,6 +53,11 @@ pub use retention::{
     EvidenceError, LineageEvidence, MAX_LINEAGE_EVIDENCE_BYTES, PreparedLineageEvidence,
 };
 pub use storage::*;
+pub use resume::{MAX_RESUME_MEMBERSHIPS, ResumeBundle, ResumeError};
+#[cfg(target_arch = "wasm32")]
+pub use resume::BrowserResume;
+#[cfg(not(target_arch = "wasm32"))]
+pub use resume::NativeResume;
 pub use unlock::{WALLET_SCOPE, WalletUnlock};
 pub use update_outbox::MAX_UPDATE_OUTBOX_BYTES;
 pub use witness_state::MAX_WITNESS_STATE_BYTES;

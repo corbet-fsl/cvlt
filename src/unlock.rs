@@ -50,6 +50,11 @@ impl WalletUnlock {
         Self(unlock.import(|bytes| Zeroizing::new(*bytes)))
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_bytes_for_tests(bytes: [u8; 32]) -> Self {
+        Self(Zeroizing::new(bytes))
+    }
+
     /// The wallet vault: exactly the same derivation as a direct wallet unlock
     /// (`PreparedOpen::new(unlock, "wallet")`), so existing wallet vaults open.
     pub fn wallet(&self) -> Result<PreparedOpen, OpenError> {
@@ -91,6 +96,30 @@ impl WalletUnlock {
         }
         let secret = community_secret(&self.0, fingerprint);
         PreparedOpen::from_prf(secret.as_slice(), scope)
+    }
+
+    /// The persistent unlock of this device (decision M6): the openings of the
+    /// communities it has ALREADY joined, as (founding-key fingerprint, Store scope).
+    /// The bundle carries each community's `U_c` and never `W`; minted here, beside the
+    /// openings it repeats (M5). The wallet scope is refused.
+    pub fn resume_bundle(
+        &self,
+        memberships: &[([u8; 32], &str)],
+    ) -> Result<crate::ResumeBundle, OpenError> {
+        let mut out = Vec::with_capacity(memberships.len());
+        for (fingerprint, scope) in memberships {
+            if *scope == WALLET_SCOPE || scope.is_empty() {
+                return Err(OpenError::Composition(crate::Error::Scope));
+            }
+            out.push((
+                (*fingerprint, (*scope).to_owned()),
+                community_secret(&self.0, fingerprint),
+            ));
+        }
+        if out.len() > crate::MAX_RESUME_MEMBERSHIPS {
+            return Err(OpenError::Composition(crate::Error::Scope));
+        }
+        Ok(crate::ResumeBundle::mint(out))
     }
 }
 

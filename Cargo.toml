@@ -8,7 +8,7 @@ license = "FSL-1.1-ALv2"
 repository = "https://git.corbet.ch/corbet-libs/cvlt.git"
 readme = "README.md"
 publish = false
-include = ["Cargo.toml", "src/**", "README.md", "LICENSE.md", "docs/**"]
+include = ["Cargo.toml", "src/**", "browser/**", "README.md", "LICENSE.md", "docs/**"]
 
 [lib]
 crate-type = ["rlib"]
@@ -20,6 +20,8 @@ default = []
 wallet = ["dep:cwlt", "ckmg/passport", "ckmg/wallet-engine"]
 wallet-native-prover = ["wallet", "cwlt/native-prover"]
 native-records = ["ckmg/native-records", "dep:cmsh"]
+# Native persistent unlock keeps its wrapping key in the OS key store (keyring crate).
+os-keyring = ["dep:keyring"]
 
 [dependencies]
 cwlt = { git = "https://git.corbet.ch/corbet-foss/cwlt", branch = "main", default-features = false, features = ["passport", "record", "account"], optional = true }
@@ -41,6 +43,21 @@ zeroize = { version = "1", features = ["derive"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cmsh = { git = "https://git.corbet.ch/corbet-libs/cmsh.git", branch = "main", features = ["veilid"], optional = true }
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
+getrandom = "0.3"
+
+# Windows Credential Manager is not enabled yet: the design requires local (not roaming or
+# enterprise) persistence, unverified for keyring 3; Windows keeps the user-only file.
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", optional = true, default-features = false, features = ["sync-secret-service", "crypto-rust"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+keyring = { version = "3", optional = true, default-features = false, features = ["apple-native"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 ckyh = { git = "https://git.corbet.ch/corbet-foss/ckyh", branch = "main", default-features = false, features = ["server"] }
