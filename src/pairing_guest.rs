@@ -85,6 +85,8 @@ pub struct PairingGuest<B: Backend, C: Clock, E: Entropy> {
     keys: Keys<KeyStore<B>, C, E, GuestConsent>,
     key_store: KeyStore<B>,
     request: PairingRequest,
+    /// Kept only to sign the pairing possession messages; never exposed, zeroized on drop.
+    prf: passkey::PrfOutput,
 }
 
 impl<B: Backend, C: Clock, E: Entropy> std::fmt::Debug for PairingGuest<B, C, E> {
@@ -158,6 +160,7 @@ impl PreparedOpen {
                 keys,
                 key_store,
                 request,
+                prf: self.prf,
             },
         ))
     }
@@ -202,12 +205,23 @@ impl<B: Backend, C: Clock, E: Entropy> PairingGuest<B, C, E> {
             keys,
             key_store,
             request: request.clone(),
+            prf: opening.prf,
         })
     }
 
     /// The pending request (the digest the grant must answer).
     pub fn request(&self) -> &PairingRequest {
         &self.request
+    }
+
+    /// Sign possession of this request's device key for one stamped pairing step (the add
+    /// step, before the grant). The only signature a pairing guest can make: typed input, its
+    /// own key in its own community, under the dedicated pairing purpose.
+    pub fn sign_possession(
+        &self,
+        possession: &ckmg::PairingPossession<'_>,
+    ) -> Result<[u8; 64], OpenError> {
+        sign_possession(&self.prf, &self.request, possession)
     }
 
     /// Adopt the grant that answers exactly this request: the root arrives sealed to the
@@ -231,8 +245,23 @@ impl<B: Backend, C: Clock, E: Entropy> PairingGuest<B, C, E> {
             key_store: self.key_store,
             request: self.request,
             receipt,
+            prf: self.prf,
         })
     }
+}
+
+/// The pairing possession signature of the request's own device key: the community is the
+/// request's, so a possession for another community is refused.
+fn sign_possession(
+    prf: &passkey::PrfOutput,
+    request: &PairingRequest,
+    possession: &ckmg::PairingPossession<'_>,
+) -> Result<[u8; 64], OpenError> {
+    if possession.device() != request.device.value() {
+        return Err(OpenError::Keys(ckmg::Error::Unauthorized));
+    }
+    passkey::sign_pairing_possession(prf, request.binding.community(), possession)
+        .map_err(OpenError::Keys)
 }
 
 /// The adopted pairing, until its output is acknowledged.
@@ -241,9 +270,19 @@ pub struct AcceptedPairing<B: Backend, C: Clock, E: Entropy> {
     key_store: KeyStore<B>,
     request: PairingRequest,
     receipt: Receipt,
+    prf: passkey::PrfOutput,
 }
 
 impl<B: Backend, C: Clock, E: Entropy> AcceptedPairing<B, C, E> {
+    /// Sign possession of the device key for the activation step, after the grant was
+    /// adopted: same key, same dedicated purpose and the same typed input as the add step.
+    pub fn sign_possession(
+        &self,
+        possession: &ckmg::PairingPossession<'_>,
+    ) -> Result<[u8; 64], OpenError> {
+        sign_possession(&self.prf, &self.request, possession)
+    }
+
     /// The paired lineage.
     pub fn lineage(&self) -> Option<&Lineage> {
         match &self.receipt.change {

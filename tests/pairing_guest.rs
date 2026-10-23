@@ -200,3 +200,78 @@ fn consent_allows_the_request_only_for_the_shown_anchor() {
         assert!(result.is_err());
     });
 }
+
+#[test]
+fn the_guest_signs_only_pairing_possession_for_its_own_key() {
+    futures_executor::block_on(async {
+        let (mut live, anchor) = live_anchor().await;
+        let mut client = passkeys().await;
+        let backend = cwst::backend::Memory::new();
+        let (request, guest) = cvlt::PreparedOpen::new(unlock(&mut client).await, SCOPE)
+            .unwrap()
+            .request_pairing(backend.clone(), &anchor, info(), Time, ckmg::SystemEntropy)
+            .await
+            .unwrap();
+        let device = *request.device.value();
+        let add = ckmg::PairingPossession::new(
+            SCOPE,
+            ckmg::PairingStep::Add,
+            "challenge-add",
+            &device,
+        )
+        .unwrap();
+        let signature = guest.sign_possession(&add).unwrap();
+        ckmg::verify_ed25519(&device, &add.message(), &signature).unwrap();
+        // Valid for the pairing purpose only: never as a join, session or salt message.
+        for other in [
+            ckmg::DevicePurpose::DeviceJoin,
+            ckmg::DevicePurpose::DeviceSession,
+            ckmg::DevicePurpose::SaltDerivation,
+        ] {
+            let as_other = [other.tag(), &add.payload()[..]].concat();
+            assert!(ckmg::verify_ed25519(&device, &as_other, &signature).is_err());
+        }
+        // Another key or another community is refused, nothing is signed for it.
+        let foreign_key =
+            ckmg::PairingPossession::new(SCOPE, ckmg::PairingStep::Add, "c", &[7; 32]).unwrap();
+        assert!(guest.sign_possession(&foreign_key).is_err());
+        let foreign_scope =
+            ckmg::PairingPossession::new("other", ckmg::PairingStep::Add, "c", &device).unwrap();
+        assert!(guest.sign_possession(&foreign_scope).is_err());
+        // After the grant is adopted the same key signs the activation step, a different
+        // message and signature.
+        let receipt = live.authorize_device(&request, &[]).await.unwrap();
+        live.acknowledge(receipt.operation).await.unwrap();
+        let Change::DeviceAuthorized(grant) = receipt.change else {
+            panic!("grant expected");
+        };
+        // The request's own consent is spent; adopting the grant reopens the durable request
+        // (a restarted guest signs the very same possession bytes).
+        drop(guest);
+        let guest = PairingGuest::reopen(
+            unlock(&mut client).await,
+            SCOPE,
+            backend.clone(),
+            Time,
+            ckmg::SystemEntropy,
+            &request,
+        )
+        .await
+        .unwrap();
+        assert_eq!(guest.sign_possession(&add).unwrap(), signature);
+        let accepted = guest.accept(&grant).await.unwrap();
+        let activate = ckmg::PairingPossession::new(
+            SCOPE,
+            ckmg::PairingStep::Activate,
+            "challenge-activate",
+            &device,
+        )
+        .unwrap();
+        let activated = accepted.sign_possession(&activate).unwrap();
+        ckmg::verify_ed25519(&device, &activate.message(), &activated).unwrap();
+        assert_ne!(activated, signature);
+        assert!(ckmg::verify_ed25519(&device, &add.message(), &activated).is_err());
+        assert!(accepted.sign_possession(&foreign_key).is_err());
+        accepted.acknowledge().await.unwrap();
+    });
+}
