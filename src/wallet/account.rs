@@ -312,7 +312,6 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W: AccountSlot>
     }
 }
 
-#[cfg(all(feature = "wallet-native-prover", not(target_arch = "wasm32")))]
 mod pending {
     //! Durable pending companion and accepted account under original Keys
     //! authority. The same discipline as genesis preparation: Keys before and
