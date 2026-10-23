@@ -73,3 +73,15 @@ export async function resumeForget(name) {
     db.close();
   }
 }
+
+// Revocation wipe: delete this device's local vault databases on the wallet origin.
+export async function eraseDatabases(names) {
+  for (const name of names) {
+    await new Promise((resolve, reject) => {
+      const request = indexedDB.deleteDatabase(name);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(new Error('storage'));
+      request.onblocked = () => reject(new Error('blocked'));
+    });
+  }
+}

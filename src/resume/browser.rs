@@ -13,6 +13,18 @@ extern "C" {
     async fn resume_load(name: &str, aad: &[u8]) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(catch, js_name = resumeForget)]
     async fn resume_forget(name: &str) -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(catch, js_name = eraseDatabases)]
+    async fn erase_databases(names: Vec<String>) -> Result<JsValue, JsValue>;
+}
+
+/// Revocation wipe of this device's local data on the wallet origin: delete the named
+/// IndexedDB databases (the vault's stores; the network copy remains, restore brings it
+/// back). Ordered only by the user, through the revocation of this device.
+pub async fn erase_local_databases(names: &[&str]) -> Result<(), ResumeError> {
+    erase_databases(names.iter().map(|name| (*name).to_owned()).collect())
+        .await
+        .map(|_| ())
+        .map_err(|_| ResumeError::Storage)
 }
 
 /// The browser persistent unlock of one wallet binding, in IndexedDB database `name`.

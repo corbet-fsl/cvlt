@@ -192,5 +192,9 @@ export async function probeResumeKey(name) {
         store.forget().await.unwrap();
         assert!(store.load().await.is_none());
         assert!(BrowserResume::new("", b"x").is_err());
+        // Revocation wipe: the vault's databases are deleted (also the resume store's).
+        store.save(&bundle).await.unwrap();
+        cvlt::erase_local_databases(&[name]).await.unwrap();
+        assert!(store.load().await.is_none());
     }
 }

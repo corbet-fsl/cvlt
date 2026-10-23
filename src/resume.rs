@@ -42,7 +42,7 @@ mod browser;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 #[cfg(target_arch = "wasm32")]
-pub use browser::BrowserResume;
+pub use browser::{BrowserResume, erase_local_databases};
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::NativeResume;
 

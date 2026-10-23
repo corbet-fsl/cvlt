@@ -55,7 +55,7 @@ pub use retention::{
 pub use storage::*;
 pub use resume::{MAX_RESUME_MEMBERSHIPS, ResumeBundle, ResumeError};
 #[cfg(target_arch = "wasm32")]
-pub use resume::BrowserResume;
+pub use resume::{BrowserResume, erase_local_databases};
 #[cfg(not(target_arch = "wasm32"))]
 pub use resume::NativeResume;
 pub use unlock::{WALLET_SCOPE, WalletUnlock};
