@@ -153,6 +153,9 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
     }
 
     /// Retain the wallet's signature-verified stamp; a refused answer consumes the attempt.
+    /// `expected_epoch` is the stamp epoch of the authenticated global publication (the
+    /// signed global status, `cchr::StampTrust::epoch`), never one from the wallet's reply:
+    /// a stamp signed under another epoch is refused.
     pub async fn finish_global_stamp<
         G: cwlt::passport::rand::RngCore + cwlt::passport::rand::CryptoRng,
     >(
@@ -160,10 +163,11 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
         operation: [u8; 32],
         rng: &mut G,
         response: &cwlt::passport::BlindStamp,
+        expected_epoch: u64,
         now: cwlt::passport::Timestamp,
     ) -> Result<(), WalletRestoreError> {
         self.mutate_global_passport(|holder, store| {
-            holder.prepare_finish_stamp(store, operation, rng, response, now)
+            holder.prepare_finish_stamp(store, operation, rng, response, expected_epoch, now)
         })
         .await?
         .map_err(|error| WalletRestoreError::Passport(error.into()))

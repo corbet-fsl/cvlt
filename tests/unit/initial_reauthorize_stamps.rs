@@ -204,7 +204,7 @@ fn stamped(
     let blind = key
         .issue_blind(&mut OsRng, &request, &nonce, 3, NOW)
         .unwrap();
-    holder.finish_stamp(&blind, NOW).unwrap();
+    holder.finish_stamp(&blind, 3, NOW).unwrap();
     let shown = holder
         .present_stamp(&mut OsRng, &scope, &action, NOW)
         .unwrap();
