@@ -315,7 +315,7 @@ mod pending {
     //! after every Store operation, the Store lock held across it.
     use super::*;
     use ckmg::wallet_engine::account::{
-        AcceptedAccount, AcceptedResponse, PendingGenesisBinding, ResponseTrust,
+        AcceptedAccount, AcceptedResponse, OwnerAbsence, PendingGenesisBinding, ResponseTrust,
     };
     use cwlt::account_owner::{
         AccountGenesisProof, ActivatedAccount, GenesisRequestMaterial, PendingActivation,
@@ -422,6 +422,52 @@ mod pending {
                 .await
                 .map_err(WalletRestoreError::Account)?;
             self.same_scope(&scope).await
+        }
+
+        /// Discard the one state-A companion whose request the operator can no
+        /// longer accept, proven by its own signed status (see cwlt
+        /// `discard_elapsed_pending`). One commit removes exactly that row and
+        /// keeps its request digest; the outbox is acknowledged afterwards.
+        pub async fn discard_elapsed_pending_genesis(
+            &mut self,
+            request_expires_at: u64,
+            absence: &OwnerAbsence,
+            operation: [u8; 32],
+            acknowledgement: [u8; 32],
+        ) -> Result<[u8; 32], WalletRestoreError> {
+            let storage = self.storage.clone();
+            let mut store = storage.lock().await;
+            let scope = self.account_scope(&store).await?;
+            let engine = self
+                .keys
+                .wallet_engine()
+                .await
+                .map_err(WalletRestoreError::Keys)?;
+            let discarded = self.wallet.account()?
+                .discard_elapsed_pending(
+                    &engine,
+                    &mut store,
+                    request_expires_at,
+                    absence,
+                    operation,
+                    acknowledgement,
+                )
+                .await
+                .map_err(WalletRestoreError::Account)?;
+            self.same_scope(&scope).await?;
+            Ok(discarded)
+        }
+
+        /// The request digests of every discarded state-A companion.
+        pub async fn discarded_genesis(&mut self) -> Result<Vec<[u8; 32]>, WalletRestoreError> {
+            let storage = self.storage.clone();
+            let store = storage.lock().await;
+            let scope = self.account_scope(&store).await?;
+            let digests = self.wallet.account()?
+                .discarded_genesis(&store)
+                .map_err(WalletRestoreError::Account)?;
+            self.same_scope(&scope).await?;
+            Ok(digests)
         }
 
         /// Reopen state B and re-verify the stored response under the CURRENT trust.
