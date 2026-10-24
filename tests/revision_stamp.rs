@@ -59,6 +59,9 @@ impl Authority for Allow {
     async fn check(&mut self, _request: Authorization<'_>) -> Result<(), Error> {
         Ok(())
     }
+    fn check_device_signing_current(&mut self, _request: Authorization<'_>) -> Result<u64, Error> {
+        Ok(NOW)
+    }
 }
 
 /// The member's first lineage in `scope`: a Keys `Created` receipt.
@@ -269,7 +272,11 @@ fn digest(receipt: &Receipt, member: &str, key: &[u8; 32], session: &[u8; 32]) -
 async fn host_signature(p: &mut Pairing, digest: &[u8; 32]) -> [u8; 64] {
     let approval = PairingApproval::new("alpha", digest).unwrap();
     p.host
-        .sign_device_ed25519(&approval.message(), NOW + 60)
+        .sign_device_ed25519_current(
+            ckmg::DeviceFormat::PairingApproval,
+            &approval.message(),
+            NOW + 60,
+        )
         .await
         .unwrap()
 }

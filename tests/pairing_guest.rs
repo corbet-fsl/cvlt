@@ -220,9 +220,9 @@ fn the_guest_signs_only_pairing_possession_for_its_own_key() {
         ckmg::verify_ed25519(&device, &add.message(), &signature).unwrap();
         // Valid for the pairing purpose only: never as a join, session or salt message.
         for other in [
-            ckmg::DevicePurpose::DeviceJoin,
-            ckmg::DevicePurpose::DeviceSession,
-            ckmg::DevicePurpose::SaltDerivation,
+            ckmg::DeviceFormat::DeviceJoin,
+            ckmg::DeviceFormat::DeviceSession,
+            ckmg::DeviceFormat::PairingApproval,
         ] {
             let as_other = [other.tag(), &add.payload()[..]].concat();
             assert!(ckmg::verify_ed25519(&device, &as_other, &signature).is_err());
