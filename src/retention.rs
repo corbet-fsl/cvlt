@@ -46,11 +46,14 @@ impl std::error::Error for EvidenceError {}
 /// Every use must call `verify` inside the actual current Policy borrow.
 /// This container has no network publication format or automatic acknowledgement.
 ///
-/// Three kinds exist: a passkey assertion under the Charter's registration certificate (every
+/// Four kinds exist: a passkey assertion under the Charter's registration certificate (every
 /// lineage change of a passkey member), a wallet confirmation stamp (a member's FIRST
 /// community lineage only, verified offline with [`StampTrust`] at the receipt's signed time),
 /// and a wallet-signed birth statement (the FIRST wallet lineage of a one-ceremony
-/// registration only, wallet scope only, verified offline by `cchr::verify_birth_genesis`).
+/// registration only, wallet scope only, verified offline by `cchr::verify_birth_genesis`), and
+/// pairing revision evidence (a wallet stamp plus the host device key's signature, revision above
+/// 1 only, verified by [`LineageEvidence::verify_revision`] against the member's current devices;
+/// `verify` and `verify_with_stamps` refuse it, as they refuse stamp evidence without trust).
 pub struct LineageEvidence {
     receipt: Receipt,
     proof: Proof,
@@ -64,6 +67,9 @@ enum Proof {
     Stamp(Box<GenesisStampEvidence>),
     /// Charter's public birth genesis evidence (its wire bytes are this evidence's bytes).
     Birth(Box<cchr::BirthGenesisEvidence>),
+    /// Pairing revision evidence (revision above 1): one wallet stamp and the host device key's
+    /// signature over the same pairing digest.
+    Revision(Box<RevisionProof>),
 }
 
 /// Map a fixed birth refusal onto the fixed lineage refusals, carrying no supplied values.
@@ -101,10 +107,6 @@ fn verify_birth<'a>(
     let observation = VerifiedLineageObservation::born(current, &verified, now);
     observation.lineage(now)?;
     Ok((observation, verified))
-}
-    /// Pairing revision evidence (revision above 1): one wallet stamp and the host device key's
-    /// signature over the same pairing digest.
-    Revision(Box<RevisionProof>),
 }
 /// The public parts of pairing revision evidence beside its receipt. Both the retained Store
 /// value and the publication wire carry exactly these fields; decoding grants nothing.
@@ -564,7 +566,9 @@ impl LineageEvidence {
                 expected_member,
                 now,
             ),
-            Proof::Stamp(_) | Proof::Revision(_) => Err(LineageError::Policy(cchr::Error::Unavailable)),
+            Proof::Stamp(_) | Proof::Revision(_) => {
+                Err(LineageError::Policy(cchr::Error::Unavailable))
+            }
             Proof::Birth(birth) => verify_birth(current, birth, expected_member, now)
                 .map(|(observation, _)| observation),
         }
