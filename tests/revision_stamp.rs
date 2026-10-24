@@ -167,7 +167,7 @@ fn stamp(
     let blind = key
         .issue_blind(&mut OsRng, &request, &nonce, EPOCH, now)
         .unwrap();
-    holder.finish_stamp(&blind, now).unwrap();
+    holder.finish_stamp(&blind, EPOCH, now).unwrap();
     let (scope, action) = &approvals[0];
     holder
         .present_stamp(&mut OsRng, scope, action, now)
