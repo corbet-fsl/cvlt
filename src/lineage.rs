@@ -31,6 +31,8 @@ pub enum LineageError {
     /// The genesis confirmation stamp, its key period or its expiry cohort refused the
     /// evidence at the receipt's signed time.
     Stamp,
+    /// Pairing revision evidence refused: receipt, scope, host signature or device, stamp.
+    Revision(cchr::RevisionError),
 }
 impl std::fmt::Display for LineageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -12,6 +12,8 @@ const ASSERTION: &str = "lineage-assertion";
 const CERTIFICATE: &str = "lineage-certificate";
 const STAMP: &str = "lineage-stamp";
 const BIRTH: &str = "lineage-birth";
+const REVISION: &str = "lineage-revision";
+const REVISION_PURPOSE: &str = "cvlt.lineage-revision-evidence.v1";
 const PASSKEY_PURPOSE: &str = "cvlt.lineage-evidence.v1";
 
 /// Aggregate bound for the three original public evidence values in local Storage.
@@ -99,6 +101,37 @@ fn verify_birth<'a>(
     let observation = VerifiedLineageObservation::born(current, &verified, now);
     observation.lineage(now)?;
     Ok((observation, verified))
+}
+    /// Pairing revision evidence (revision above 1): one wallet stamp and the host device key's
+    /// signature over the same pairing digest.
+    Revision(Box<RevisionProof>),
+}
+/// The public parts of pairing revision evidence beside its receipt. Both the retained Store
+/// value and the publication wire carry exactly these fields; decoding grants nothing.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RevisionProof {
+    presentation: Vec<u8>,
+    salt: [u8; 32],
+    at: u64,
+    session: [u8; 32],
+    host_signature: Vec<u8>,
+}
+impl RevisionProof {
+    fn signature(&self) -> Result<[u8; 64], EvidenceError> {
+        self.host_signature
+            .as_slice()
+            .try_into()
+            .map_err(|_| EvidenceError::Invalid)
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RevisionWire {
+    purpose: String,
+    receipt: Receipt,
+    #[serde(flatten)]
+    proof: RevisionProof,
 }
 /// Local Storage value of genesis stamp evidence beside the receipt: the presentation of the
 /// `lineage_genesis` slot, the device's salt of that slot (public once presented) and the time
@@ -210,6 +243,12 @@ impl LineageEvidence {
             Proof::Stamp(stamp) => stamp.to_bytes().map_err(|_| EvidenceError::Invalid)?,
             // Charter owns the birth evidence wire as well.
             Proof::Birth(birth) => birth.to_bytes().map_err(|_| EvidenceError::Invalid)?,
+            Proof::Revision(proof) => serde_json::to_vec(&RevisionWire {
+                purpose: REVISION_PURPOSE.into(),
+                receipt: self.receipt.clone(),
+                proof: (**proof).clone(),
+            })
+            .map_err(|_| EvidenceError::Invalid)?,
         };
         if bytes.len() > MAX_LINEAGE_EVIDENCE_BYTES {
             return Err(EvidenceError::Limit);
@@ -238,6 +277,15 @@ impl LineageEvidence {
             Self {
                 receipt: birth.receipt().clone(),
                 proof: Proof::Birth(Box::new(birth)),
+            }
+        } else if let Ok(wire) = serde_json::from_slice::<RevisionWire>(bytes) {
+            if wire.purpose != REVISION_PURPOSE {
+                return Err(EvidenceError::Invalid);
+            }
+            wire.proof.signature()?;
+            Self {
+                receipt: wire.receipt,
+                proof: Proof::Revision(Box::new(wire.proof)),
             }
         } else {
             let stamp =
@@ -375,6 +423,53 @@ impl LineageEvidence {
         Ok(PreparedLineageEvidence(value))
     }
 
+    /// Capture pairing revision evidence (a `DeviceAuthorized` receipt above revision 1): the
+    /// presentation of the community's ONE `device_pair` slot and the host device key's
+    /// signature over the same pairing digest. `devices` is the verifier's CURRENT lineage of
+    /// the member; the host must be one of its devices (never a delegate or a removed device).
+    /// Verified now within one synchronous current Policy borrow, and again at every later use.
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_revision(
+        current: &cchr::VerifiedCharter,
+        stamps: &StampTrust,
+        devices: &ckmg::Lineage,
+        receipt: &Receipt,
+        presentation: &StampPresentation,
+        salt: [u8; 32],
+        session: [u8; 32],
+        host_signature: [u8; 64],
+        at: u64,
+        expected_member: &str,
+        now: u64,
+    ) -> Result<PreparedLineageEvidence, EvidenceError> {
+        cchr::verify_revision(
+            current,
+            stamps,
+            devices,
+            receipt,
+            presentation,
+            salt,
+            &session,
+            &host_signature,
+            at,
+            expected_member,
+            now,
+        )
+        .map_err(|error| EvidenceError::Evidence(LineageError::Revision(error)))?;
+        let value = Self {
+            receipt: receipt.clone(),
+            proof: Proof::Revision(Box::new(RevisionProof {
+                presentation: presentation.to_bytes(),
+                salt,
+                at,
+                session,
+                host_signature: host_signature.to_vec(),
+            })),
+        };
+        value.encoded()?;
+        Ok(PreparedLineageEvidence(value))
+    }
+
     /// Whether this is wallet birth genesis evidence.
     pub fn is_birth(&self) -> bool {
         matches!(self.proof, Proof::Birth(_))
@@ -385,8 +480,47 @@ impl LineageEvidence {
     pub fn birth_genesis(&self) -> Option<&cchr::BirthGenesisEvidence> {
         match &self.proof {
             Proof::Birth(birth) => Some(birth),
-            Proof::Passkey { .. } | Proof::Stamp(_) => None,
+            Proof::Passkey { .. } | Proof::Stamp(_) | Proof::Revision(_) => None,
         }
+    }
+
+    /// Whether this is pairing revision evidence (verified with [`Self::verify_revision`]).
+    pub fn is_revision(&self) -> bool {
+        matches!(self.proof, Proof::Revision(_))
+    }
+
+    /// Reverify pairing revision evidence against the current Charter, the wallet's stamp trust
+    /// and the verifier's CURRENT lineage `devices` of the member. Any other kind refuses
+    /// with `Scope`. The host's key must be in `devices` at THIS call, so a host removed since
+    /// the pairing is refused.
+    pub fn verify_revision<'a>(
+        &'a self,
+        current: &cchr::VerifiedCharter,
+        stamps: &StampTrust,
+        devices: &ckmg::Lineage,
+        expected_member: &str,
+        now: u64,
+    ) -> Result<cchr::VerifiedRevision<'a>, LineageError> {
+        let Proof::Revision(proof) = &self.proof else {
+            return Err(LineageError::Scope);
+        };
+        let presentation =
+            StampPresentation::from_bytes(&proof.presentation).map_err(|_| LineageError::Scope)?;
+        let signature = proof.signature().map_err(|_| LineageError::Scope)?;
+        cchr::verify_revision(
+            current,
+            stamps,
+            devices,
+            &self.receipt,
+            &presentation,
+            proof.salt,
+            &proof.session,
+            &signature,
+            proof.at,
+            expected_member,
+            now,
+        )
+        .map_err(LineageError::Revision)
     }
 
     /// Whether this is genesis evidence by stamp (which needs [`StampTrust`] to verify).
@@ -399,7 +533,7 @@ impl LineageEvidence {
     pub fn genesis_stamp(&self) -> Option<&GenesisStampEvidence> {
         match &self.proof {
             Proof::Stamp(stamp) => Some(stamp),
-            Proof::Passkey { .. } | Proof::Birth(_) => None,
+            Proof::Passkey { .. } | Proof::Birth(_) | Proof::Revision(_) => None,
         }
     }
 
@@ -430,7 +564,7 @@ impl LineageEvidence {
                 expected_member,
                 now,
             ),
-            Proof::Stamp(_) => Err(LineageError::Policy(cchr::Error::Unavailable)),
+            Proof::Stamp(_) | Proof::Revision(_) => Err(LineageError::Policy(cchr::Error::Unavailable)),
             Proof::Birth(birth) => verify_birth(current, birth, expected_member, now)
                 .map(|(observation, _)| observation),
         }
@@ -463,7 +597,7 @@ impl LineageEvidence {
                 }
                 Ok(observation)
             }
-            Proof::Stamp(_) => Err(LineageError::Scope),
+            Proof::Stamp(_) | Proof::Revision(_) => Err(LineageError::Scope),
         }
     }
 
@@ -492,6 +626,8 @@ impl LineageEvidence {
                 )?;
                 Ok(VerifiedLineageObservation::stamped(current, genesis, now))
             }
+            // Needs the current devices: use `verify_revision`.
+            Proof::Revision(_) => Err(LineageError::Policy(cchr::Error::Unavailable)),
         }
     }
 
@@ -588,9 +724,22 @@ impl LineageEvidence {
         let birth = store
             .read(BIRTH, operation)
             .map_err(EvidenceError::Storage)?;
-        let value = match (receipt, assertion, certificate, stamp, birth) {
-            (None, None, None, None, None) => return Ok(None),
-            (Some(receipt), Some(assertion), Some(certificate), None, None) => {
+        let revision = store
+            .read(REVISION, operation)
+            .map_err(EvidenceError::Storage)?;
+        let value = match (receipt, assertion, certificate, stamp, birth, revision) {
+            (None, None, None, None, None, None) => return Ok(None),
+            (Some(receipt), None, None, None, None, Some(revision)) => {
+                bound(receipt.len(), revision.len(), 0)?;
+                let proof: RevisionProof =
+                    serde_json::from_slice(revision).map_err(|_| EvidenceError::Invalid)?;
+                proof.signature()?;
+                Self {
+                    receipt: serde_json::from_slice(receipt).map_err(|_| EvidenceError::Invalid)?,
+                    proof: Proof::Revision(Box::new(proof)),
+                }
+            }
+            (Some(receipt), Some(assertion), Some(certificate), None, None, None) => {
                 bound(receipt.len(), assertion.len(), certificate.len())?;
                 Self {
                     receipt: serde_json::from_slice(receipt).map_err(|_| EvidenceError::Invalid)?,
@@ -601,7 +750,7 @@ impl LineageEvidence {
                     },
                 }
             }
-            (Some(receipt), None, None, Some(stamp), None) => {
+            (Some(receipt), None, None, Some(stamp), None, None) => {
                 bound(receipt.len(), stamp.len(), 0)?;
                 let receipt: Receipt =
                     serde_json::from_slice(receipt).map_err(|_| EvidenceError::Invalid)?;
@@ -612,7 +761,7 @@ impl LineageEvidence {
                     receipt,
                 }
             }
-            (Some(receipt), None, None, None, Some(birth)) => {
+            (Some(receipt), None, None, None, Some(birth), None) => {
                 bound(receipt.len(), birth.len(), 0)?;
                 let receipt: Receipt =
                     serde_json::from_slice(receipt).map_err(|_| EvidenceError::Invalid)?;
@@ -660,6 +809,11 @@ impl LineageEvidence {
                     (ASSERTION, assertion),
                     (CERTIFICATE, certificate.clone()),
                 ])
+            }
+            Proof::Revision(proof) => {
+                let proof = serde_json::to_vec(proof).map_err(|_| EvidenceError::Invalid)?;
+                bound(receipt.len(), proof.len(), 0)?;
+                Ok(vec![(RECEIPT, receipt), (REVISION, proof)])
             }
             Proof::Stamp(stamp) => {
                 let stamp = serde_json::to_vec(&StampProof {
