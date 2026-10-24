@@ -497,26 +497,19 @@ pub async fn native_checkpoint_record<
     child: Option<usize>,
 ) -> Result<Record<cmsh::VeilidRecord>, CheckpointError> {
     scope_digest(scope)?;
-    let label = match child {
-        None => "vault.checkpoint".to_owned(),
-        Some(index) if index < MAX_CHECKPOINT_RECORDS => format!("vault.checkpoint.chunk.{index}"),
-        Some(_) => return Err(CheckpointError::Limit),
-    };
-    let purpose =
-        ckmg::Purpose::new(ckmg::Scope::Member, &label, 0).map_err(|_| CheckpointError::Invalid)?;
-    let handle = keys
-        .key(purpose)
-        .await
-        .map_err(|_| CheckpointError::Unavailable)?;
-    if handle.certificate().binding.community() != scope {
-        return Err(CheckpointError::Invalid);
+    if child.is_some_and(|index| index >= MAX_CHECKPOINT_RECORDS) {
+        return Err(CheckpointError::Limit);
     }
     let schema =
         ckmg::NativeRecordSchema::dflt(CHECKPOINT_SUBKEYS).map_err(|_| CheckpointError::Invalid)?;
-    let initializer = keys
-        .native_record_initializer(&handle, schema)
+    // The record purposes are reserved in Keys: no generic purpose handle reaches them.
+    let (binding, initializer) = keys
+        .native_checkpoint_record_initializer(child, schema)
         .await
         .map_err(|_| CheckpointError::Unavailable)?;
+    if binding.community() != scope {
+        return Err(CheckpointError::Invalid);
+    }
     records
         .initialize(initializer)
         .await

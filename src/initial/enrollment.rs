@@ -238,18 +238,28 @@ impl<B: Backend> UnenrolledInitial<B> {
             .map_err(|_| InitialError::Invalid)
     }
 
-    /// The device key's signature over `payload` for one fixed `purpose` (ckmg prepends the
-    /// purpose's domain tag), the only device signer before activation. Only a validated
-    /// device-key enrollment signs; after activation `Keys` signs.
+    /// The device key's signature over `payload` in one typed `format` (ckmg prepends the
+    /// format's tag and refuses formats the enrollment may not sign), the only device signer
+    /// before activation. Only a validated device-key enrollment signs; after activation
+    /// `Keys` signs.
     pub fn sign_device(
         &self,
-        purpose: ckmg::DevicePurpose,
+        format: ckmg::DeviceFormat,
         payload: &[u8],
     ) -> Result<[u8; 64], InitialError> {
         self.validate()?;
         genesis_at(&self.store)?;
         self.candidate
-            .sign_device(purpose, payload)
+            .sign_device(format, payload)
+            .map_err(InitialError::Keys)
+    }
+
+    /// The device key's stamp salt over `payload` before activation (ckmg's device salt).
+    pub fn device_salt(&self, payload: &[u8]) -> Result<[u8; 32], InitialError> {
+        self.validate()?;
+        genesis_at(&self.store)?;
+        self.candidate
+            .device_salt(payload)
             .map_err(InitialError::Keys)
     }
 

@@ -601,9 +601,9 @@ shared!(
         );
         let payload = b"garden, challenge, key";
         let signature = pending
-            .sign_device(ckmg::DevicePurpose::DeviceJoin, payload)
+            .sign_device(ckmg::DeviceFormat::DeviceJoin, payload)
             .unwrap();
-        let signed = [ckmg::DevicePurpose::DeviceJoin.tag(), &payload[..]].concat();
+        let signed = [ckmg::DeviceFormat::DeviceJoin.tag(), &payload[..]].concat();
         ckmg::verify_ed25519(device.value(), &signed, &signature).unwrap();
         drop(pending);
         // A restart rebuilds the same time, challenge and action from durable state.
@@ -615,7 +615,7 @@ shared!(
         assert_eq!(pending.passkey_challenge().unwrap(), challenge);
         assert_eq!(
             pending
-                .sign_device(ckmg::DevicePurpose::DeviceJoin, payload)
+                .sign_device(ckmg::DeviceFormat::DeviceJoin, payload)
                 .unwrap(),
             signature
         );
@@ -624,25 +624,24 @@ shared!(
         let session = opening(9, "garden").sign_device_session(payload).unwrap();
         assert_eq!(
             pending
-                .sign_device(ckmg::DevicePurpose::DeviceSession, payload)
+                .sign_device(ckmg::DeviceFormat::DeviceSession, payload)
                 .unwrap(),
             session
         );
-        // It rebuilds the salt signature bit-exact and refuses the join purpose.
+        // It rebuilds the salt bit-exact; the enrollment never signs the salt message.
         assert_eq!(
-            opening(9, "garden")
-                .sign_device(ckmg::DevicePurpose::SaltDerivation, payload)
-                .unwrap(),
-            pending
-                .sign_device(ckmg::DevicePurpose::SaltDerivation, payload)
-                .unwrap()
+            opening(9, "garden").device_salt(payload).unwrap(),
+            pending.device_salt(payload).unwrap()
         );
-        assert!(
-            opening(9, "garden")
-                .sign_device(ckmg::DevicePurpose::DeviceJoin, payload)
-                .is_err()
-        );
-        let signed = [ckmg::DevicePurpose::DeviceSession.tag(), &payload[..]].concat();
+        for format in ckmg::DeviceFormat::ALL {
+            if !matches!(
+                format,
+                ckmg::DeviceFormat::DeviceJoin | ckmg::DeviceFormat::DeviceSession
+            ) {
+                assert!(pending.sign_device(format, payload).is_err());
+            }
+        }
+        let signed = [ckmg::DeviceFormat::DeviceSession.tag(), &payload[..]].concat();
         ckmg::verify_ed25519(device.value(), &signed, &session).unwrap();
         // Activation keeps the device key as the authority reference and the time.
         let mut owner = DeviceOwner {
@@ -697,7 +696,7 @@ shared!(
             Some(InitialError::Invalid)
         );
         assert_eq!(
-            pending.sign_device(ckmg::DevicePurpose::DeviceSession, b"nonce"),
+            pending.sign_device(ckmg::DeviceFormat::DeviceSession, b"nonce"),
             Err(InitialError::Invalid)
         );
     }

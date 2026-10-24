@@ -86,16 +86,23 @@ impl PreparedOpen {
         passkey::sign_device_session(&self.prf, &self.scope, payload).map_err(OpenError::Keys)
     }
 
-    /// The same opening signer for a device-key member restarted during its first
-    /// publication: `DeviceSession` or `SaltDerivation` (its genesis stamp salt, rebuilt
-    /// bit-exact); `DeviceJoin` is refused (the enrollment signs it before activation).
-    pub fn sign_device(
+    /// The wallet device key's birth signature over `payload` in one birth format
+    /// (`WalletBirthDevice` or `WalletBirthPassport`; ckmg prepends the tag and refuses every
+    /// other format and every scope but the wallet's). A registration restarted after
+    /// activation binds its wallet device from the unlocked session.
+    pub fn sign_device_birth(
         &self,
-        purpose: ckmg::DevicePurpose,
+        format: ckmg::DeviceFormat,
         payload: &[u8],
     ) -> Result<[u8; 64], OpenError> {
-        passkey::sign_device_opened(&self.prf, &self.scope, purpose, payload)
-            .map_err(OpenError::Keys)
+        passkey::sign_device_birth(&self.prf, &self.scope, format, payload).map_err(OpenError::Keys)
+    }
+
+    /// The device key's stamp salt over `payload` for a device-key member restarted during
+    /// its first publication: its genesis stamp salt, rebuilt bit-exact. Only the salt leaves
+    /// ckmg, never a signature over the salt message.
+    pub fn device_salt(&self, payload: &[u8]) -> Result<[u8; 32], OpenError> {
+        passkey::device_salt(&self.prf, &self.scope, payload).map_err(OpenError::Keys)
     }
 
     /// Create the independent node-only owner from this same consumed unlock.
