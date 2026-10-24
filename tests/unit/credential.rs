@@ -207,19 +207,30 @@ fn the_pin_moves_forward_only_by_compare_and_swap() {
         let (mut vault, deny) = base().await;
         assert_eq!(vault.community_pin().await, Ok(None));
         let first = pin(1, None);
-        assert_eq!(vault.write_community_pin(None, &first, None).await, Ok(true));
+        assert_eq!(
+            vault.write_community_pin(None, &first, None).await,
+            Ok(true)
+        );
         assert_eq!(vault.community_pin().await, Ok(Some(first)));
         // Identical replay writes nothing.
         let before = vault.storage().lock().await.version().unwrap();
-        assert_eq!(vault.write_community_pin(Some(&first), &first, None).await, Ok(false));
+        assert_eq!(
+            vault.write_community_pin(Some(&first), &first, None).await,
+            Ok(false)
+        );
         assert_eq!(vault.storage().lock().await.version().unwrap(), before);
         // A stale expectation never overwrites.
         assert_eq!(
-            vault.write_community_pin(None, &pin(1, Some((1, 5))), None).await,
+            vault
+                .write_community_pin(None, &pin(1, Some((1, 5))), None)
+                .await,
             Err(CredentialError::Conflict)
         );
         let at_two = pin(1, Some((2, 5)));
-        assert_eq!(vault.write_community_pin(Some(&first), &at_two, None).await, Ok(true));
+        assert_eq!(
+            vault.write_community_pin(Some(&first), &at_two, None).await,
+            Ok(true)
+        );
         // Rollback, fork and losing the head are refused.
         for bad in [pin(1, Some((1, 5))), pin(1, Some((2, 6))), pin(1, None)] {
             assert_eq!(
@@ -227,18 +238,35 @@ fn the_pin_moves_forward_only_by_compare_and_swap() {
                 Err(CredentialError::Conflict)
             );
         }
-        assert_eq!(vault.write_community_pin(Some(&at_two), &pin(1, Some((3, 7))), None).await, Ok(true));
+        assert_eq!(
+            vault
+                .write_community_pin(Some(&at_two), &pin(1, Some((3, 7))), None)
+                .await,
+            Ok(true)
+        );
         // Another founding key starts without a head, never with one.
         let current = pin(1, Some((3, 7)));
         assert_eq!(
-            vault.write_community_pin(Some(&current), &pin(2, Some((1, 1))), None).await,
+            vault
+                .write_community_pin(Some(&current), &pin(2, Some((1, 1))), None)
+                .await,
             Err(CredentialError::Conflict)
         );
-        assert_eq!(vault.write_community_pin(Some(&current), &pin(2, None), None).await, Ok(true));
+        assert_eq!(
+            vault
+                .write_community_pin(Some(&current), &pin(2, None), None)
+                .await,
+            Ok(true)
+        );
         deny.set(true);
-        assert!(matches!(vault.community_pin().await, Err(CredentialError::Keys(_))));
         assert!(matches!(
-            vault.write_community_pin(Some(&pin(2, None)), &pin(2, Some((1, 1))), None).await,
+            vault.community_pin().await,
+            Err(CredentialError::Keys(_))
+        ));
+        assert!(matches!(
+            vault
+                .write_community_pin(Some(&pin(2, None)), &pin(2, Some((1, 1))), None)
+                .await,
             Err(CredentialError::Keys(_))
         ));
     });
@@ -250,30 +278,57 @@ fn the_pin_and_the_credential_change_in_one_commit_or_not_at_all() {
         let (mut vault, _) = base().await;
         let one = pin(1, None);
         let v0 = vault.storage().lock().await.version().unwrap();
-        assert_eq!(vault.write_community_pin(None, &one, Some((None, b"cred"))).await, Ok(true));
+        assert_eq!(
+            vault
+                .write_community_pin(None, &one, Some((None, b"cred")))
+                .await,
+            Ok(true)
+        );
         assert_eq!(vault.storage().lock().await.version().unwrap(), v0 + 1);
-        assert_eq!(&**vault.community_credential().await.unwrap().unwrap(), b"cred");
+        assert_eq!(
+            &**vault.community_credential().await.unwrap().unwrap(),
+            b"cred"
+        );
         // A wrong credential expectation leaves the pin untouched too.
         let next = pin(1, Some((1, 2)));
         assert_eq!(
-            vault.write_community_pin(Some(&one), &next, Some((Some(b"other"), b"new"))).await,
+            vault
+                .write_community_pin(Some(&one), &next, Some((Some(b"other"), b"new")))
+                .await,
             Err(CredentialError::Conflict)
         );
         assert_eq!(vault.community_pin().await, Ok(Some(one)));
         assert_eq!(
-            vault.write_community_pin(Some(&one), &next, Some((Some(b"cred"), b"new"))).await,
+            vault
+                .write_community_pin(Some(&one), &next, Some((Some(b"cred"), b"new")))
+                .await,
             Ok(true)
         );
         assert_eq!(vault.community_pin().await, Ok(Some(next)));
-        assert_eq!(&**vault.community_credential().await.unwrap().unwrap(), b"new");
+        assert_eq!(
+            &**vault.community_credential().await.unwrap().unwrap(),
+            b"new"
+        );
         // An empty credential is invalid and writes nothing.
         assert_eq!(
-            vault.write_community_pin(Some(&next), &pin(1, Some((2, 2))), Some((Some(b"new"), b""))).await,
+            vault
+                .write_community_pin(
+                    Some(&next),
+                    &pin(1, Some((2, 2))),
+                    Some((Some(b"new"), b""))
+                )
+                .await,
             Err(CredentialError::Invalid)
         );
         // An unchanged credential with an advanced pin still commits the pin.
         assert_eq!(
-            vault.write_community_pin(Some(&next), &pin(1, Some((2, 2))), Some((Some(b"new"), b"new"))).await,
+            vault
+                .write_community_pin(
+                    Some(&next),
+                    &pin(1, Some((2, 2))),
+                    Some((Some(b"new"), b"new"))
+                )
+                .await,
             Ok(true)
         );
     });
@@ -283,15 +338,25 @@ fn the_pin_and_the_credential_change_in_one_commit_or_not_at_all() {
 fn a_pin_bound_elsewhere_or_malformed_is_never_returned() {
     run(async {
         let (mut vault, _) = base().await;
-        vault.write_community_pin(None, &pin(1, None), None).await.unwrap();
+        vault
+            .write_community_pin(None, &pin(1, None), None)
+            .await
+            .unwrap();
         let mut store = vault.storage().lock().await;
         let version = store.version().unwrap();
-        for (i, junk) in [&b"junk"[..], b"cvlt.community-pin.v1\0\0"].into_iter().enumerate() {
+        for (i, junk) in [&b"junk"[..], b"cvlt.community-pin.v1\0\0"]
+            .into_iter()
+            .enumerate()
+        {
             store
                 .commit(
                     version + i as u64,
                     [9 + i as u8; 32],
-                    &[cwst::Change::Put { owner: "cvlt.community-pin", key: b"current", value: junk }],
+                    &[cwst::Change::Put {
+                        owner: "cvlt.community-pin",
+                        key: b"current",
+                        value: junk,
+                    }],
                     &[],
                 )
                 .await

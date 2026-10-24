@@ -7,7 +7,11 @@ use cvlt::{ResumeBundle, WalletUnlock};
 const JOINED: [([u8; 32], &str); 2] = [([1; 32], "garden"), ([2; 32], "orchard")];
 
 fn device(bundle: &ResumeBundle, (fingerprint, scope): ([u8; 32], &str)) -> ckmg::PublicKey {
-    bundle.community(&fingerprint, scope).unwrap().device().unwrap()
+    bundle
+        .community(&fingerprint, scope)
+        .unwrap()
+        .device()
+        .unwrap()
 }
 
 async fn minted() -> (WalletUnlock, ResumeBundle) {
@@ -33,9 +37,15 @@ mod native {
             store(dir.path()).save(&bundle).unwrap();
             drop(bundle);
             // Restart: a fresh store object, no passkey client exists at all.
-            let resumed = store(dir.path()).load().expect("resumed without a ceremony");
+            let resumed = store(dir.path())
+                .load()
+                .expect("resumed without a ceremony");
             for joined in JOINED {
-                let direct = wallet.community(&joined.0, joined.1).unwrap().device().unwrap();
+                let direct = wallet
+                    .community(&joined.0, joined.1)
+                    .unwrap()
+                    .device()
+                    .unwrap();
                 assert_eq!(device(&resumed, joined), direct);
             }
             // A community not yet joined is not in the bundle: it needs the passkey (a stamp).
@@ -54,7 +64,10 @@ mod native {
             #[cfg(unix)]
             for name in ["resume.v1", "resume.v1.key"] {
                 use std::os::unix::fs::PermissionsExt;
-                let mode = std::fs::metadata(dir.path().join(name)).unwrap().permissions().mode();
+                let mode = std::fs::metadata(dir.path().join(name))
+                    .unwrap()
+                    .permissions()
+                    .mode();
                 assert_eq!(mode & 0o777, 0o600, "{name}");
             }
             assert!(!store.in_os_keyring());
@@ -269,7 +282,11 @@ export async function probeResumeKey(name) {
             .load()
             .await
             .expect("resumed without a ceremony");
-        let direct = wallet.community(&JOINED[0].0, JOINED[0].1).unwrap().device().unwrap();
+        let direct = wallet
+            .community(&JOINED[0].0, JOINED[0].1)
+            .unwrap()
+            .device()
+            .unwrap();
         assert_eq!(device(&resumed, JOINED[0]), direct);
         let probe = js_sys::Array::from(&probe_resume_key(name).await.unwrap());
         assert_eq!(probe.get(0).as_bool(), Some(true), "a CryptoKey object");

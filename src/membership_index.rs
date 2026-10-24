@@ -161,8 +161,9 @@ impl MembershipIndex {
                     .map_err(|_| IndexError::Invalid)?,
             ));
             at += 2;
-            let address = std::str::from_utf8(bytes.get(at..at + length).ok_or(IndexError::Invalid)?)
-                .map_err(|_| IndexError::Invalid)?;
+            let address =
+                std::str::from_utf8(bytes.get(at..at + length).ok_or(IndexError::Invalid)?)
+                    .map_err(|_| IndexError::Invalid)?;
             at += length;
             let fingerprint: [u8; 32] = bytes
                 .get(at..at + 32)
@@ -280,7 +281,10 @@ pub async fn read_index(
 ) -> Result<Option<(u32, MembershipIndex)>, IndexError> {
     match record.read().await {
         None => Ok(None),
-        Some(seen) => Ok(Some((seen.sequence, MembershipIndex::open(cipher, &seen.sealed)?))),
+        Some(seen) => Ok(Some((
+            seen.sequence,
+            MembershipIndex::open(cipher, &seen.sealed)?,
+        ))),
     }
 }
 
@@ -294,7 +298,10 @@ pub async fn add_entry(
     entry: MembershipEntry,
 ) -> Result<Outcome, IndexError> {
     let mut known = read_index(record, cipher).await?;
-    if known.as_ref().is_some_and(|(_, index)| index.contains(&entry)) {
+    if known
+        .as_ref()
+        .is_some_and(|(_, index)| index.contains(&entry))
+    {
         // A forced authenticated read already shows it: replicated state, nothing to add.
         return Ok(Outcome::Confirmed);
     }
@@ -305,7 +312,10 @@ pub async fn add_entry(
         };
         index.insert(entry.clone());
         let sealed = index.seal(cipher, entropy)?;
-        match record.publish(base.checked_add(1).ok_or(IndexError::Full)?, &sealed).await {
+        match record
+            .publish(base.checked_add(1).ok_or(IndexError::Full)?, &sealed)
+            .await
+        {
             Ok(outcome) => return Ok(outcome),
             Err(Err(error)) => return Err(error),
             Err(Ok(winner)) => {
@@ -336,7 +346,11 @@ mod tests {
     use ckmg::passkey::{PrfOutput, store_cipher};
 
     fn cipher(seed: u8) -> StoreCipher {
-        store_cipher(&PrfOutput::from_bytes(&[seed; 32]).unwrap(), MEMBERSHIP_SCOPE).unwrap()
+        store_cipher(
+            &PrfOutput::from_bytes(&[seed; 32]).unwrap(),
+            MEMBERSHIP_SCOPE,
+        )
+        .unwrap()
     }
     fn entry(name: &str, byte: u8) -> MembershipEntry {
         MembershipEntry::new(name, [byte; 32]).unwrap()
@@ -391,7 +405,10 @@ mod tests {
         assert_eq!(MembershipIndex::decode(&bytes).unwrap(), index);
         let mut dirty = bytes.clone();
         *dirty.last_mut().unwrap() = 1;
-        assert_eq!(MembershipIndex::decode(&dirty).unwrap_err(), IndexError::Invalid);
+        assert_eq!(
+            MembershipIndex::decode(&dirty).unwrap_err(),
+            IndexError::Invalid
+        );
         assert!(MembershipIndex::decode(&bytes[..100]).is_err());
         bytes[0] = 2;
         assert!(MembershipIndex::decode(&bytes).is_err());
@@ -441,26 +458,40 @@ mod tests {
                 }
             }
             self.value = Some((sequence, sealed.to_vec()));
-            Ok(if self.replicate { Outcome::Confirmed } else { Outcome::Queued })
+            Ok(if self.replicate {
+                Outcome::Confirmed
+            } else {
+                Outcome::Queued
+            })
         }
     }
     fn memory() -> Memory {
-        Memory { value: None, readable: true, replicate: true, intruder: None }
+        Memory {
+            value: None,
+            readable: true,
+            replicate: true,
+            intruder: None,
+        }
     }
 
     #[test]
     fn first_entry_confirms_and_a_second_device_merges() {
         let (c, mut rng) = (cipher(3), ckmg::SystemEntropy);
         let mut record = memory();
-        let one = futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("a.example", 1)));
+        let one =
+            futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("a.example", 1)));
         assert_eq!(one, Ok(Outcome::Confirmed));
-        let two = futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("b.example", 2)));
+        let two =
+            futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("b.example", 2)));
         assert_eq!(two, Ok(Outcome::Confirmed));
-        let (sequence, index) = futures_executor::block_on(read_index(&mut record, &c)).unwrap().unwrap();
+        let (sequence, index) = futures_executor::block_on(read_index(&mut record, &c))
+            .unwrap()
+            .unwrap();
         assert_eq!(sequence, 2);
         assert_eq!(index.len(), 2);
         // Adding a known entry changes nothing the caller needs: still confirmed.
-        let again = futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("a.example", 1)));
+        let again =
+            futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("a.example", 1)));
         assert_eq!(again, Ok(Outcome::Confirmed));
     }
 
@@ -468,14 +499,18 @@ mod tests {
     fn a_concurrent_device_is_merged_never_overwritten() {
         let (c, mut rng) = (cipher(4), ckmg::SystemEntropy);
         let mut record = memory();
-        futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("a.example", 1))).unwrap();
+        futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("a.example", 1)))
+            .unwrap();
         let mut theirs = MembershipIndex::new();
         theirs.insert(entry("a.example", 1));
         theirs.insert(entry("z.example", 9));
         record.intruder = Some(theirs.seal(&c, &mut rng).unwrap());
-        let out = futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("b.example", 2)));
+        let out =
+            futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("b.example", 2)));
         assert_eq!(out, Ok(Outcome::Confirmed));
-        let (_, index) = futures_executor::block_on(read_index(&mut record, &c)).unwrap().unwrap();
+        let (_, index) = futures_executor::block_on(read_index(&mut record, &c))
+            .unwrap()
+            .unwrap();
         assert!(index.contains(&entry("a.example", 1)));
         assert!(index.contains(&entry("b.example", 2)));
         assert!(index.contains(&entry("z.example", 9)));
@@ -494,12 +529,21 @@ mod tests {
             replicate: true,
             intruder: None,
         };
-        let out = futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("new.example", 8)));
+        let out = futures_executor::block_on(add_entry(
+            &mut record,
+            &c,
+            &mut rng,
+            entry("new.example", 8),
+        ));
         assert_eq!(out, Ok(Outcome::Confirmed));
         record.readable = true;
-        let (sequence, index) = futures_executor::block_on(read_index(&mut record, &c)).unwrap().unwrap();
+        let (sequence, index) = futures_executor::block_on(read_index(&mut record, &c))
+            .unwrap()
+            .unwrap();
         assert_eq!(sequence, 5);
-        assert!(index.contains(&entry("old.example", 7)) && index.contains(&entry("new.example", 8)));
+        assert!(
+            index.contains(&entry("old.example", 7)) && index.contains(&entry("new.example", 8))
+        );
     }
 
     /// X1 M2: a lost swap's winner that already lists the entry is one holder's answer. It
@@ -516,19 +560,28 @@ mod tests {
             replicate: true,
             intruder: None,
         };
-        let out = futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("a.example", 1)));
+        let out =
+            futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("a.example", 1)));
         assert_eq!(out, Ok(Outcome::Confirmed));
-        assert_eq!(record.value.as_ref().map(|(sequence, _)| *sequence), Some(5));
+        assert_eq!(
+            record.value.as_ref().map(|(sequence, _)| *sequence),
+            Some(5)
+        );
         // Without replication the republish is only queued: never Confirmed.
         record.readable = false;
         record.replicate = false;
-        let out = futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("a.example", 1)));
+        let out =
+            futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("a.example", 1)));
         assert_eq!(out, Ok(Outcome::Queued));
         // An agreeing read that lists it confirms without any write.
         record.readable = true;
-        let out = futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("a.example", 1)));
+        let out =
+            futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("a.example", 1)));
         assert_eq!(out, Ok(Outcome::Confirmed));
-        assert_eq!(record.value.as_ref().map(|(sequence, _)| *sequence), Some(6));
+        assert_eq!(
+            record.value.as_ref().map(|(sequence, _)| *sequence),
+            Some(6)
+        );
     }
 
     #[test]
@@ -536,7 +589,8 @@ mod tests {
         let (c, mut rng) = (cipher(6), ckmg::SystemEntropy);
         let mut record = memory();
         record.replicate = false;
-        let out = futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("a.example", 1)));
+        let out =
+            futures_executor::block_on(add_entry(&mut record, &c, &mut rng, entry("a.example", 1)));
         assert_eq!(out, Ok(Outcome::Queued));
     }
 }

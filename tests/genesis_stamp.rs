@@ -820,7 +820,10 @@ fn the_server_verifies_the_same_bytes_with_charter_alone_and_no_charter_document
         verified.stamp().digest().to_bytes(),
         observed.stamp_digest(NOW).unwrap()
     );
-    assert_eq!(verified.into_stamp().action_kind().as_str(), "lineage_genesis");
+    assert_eq!(
+        verified.into_stamp().action_kind().as_str(),
+        "lineage_genesis"
+    );
 
     // Another member, community or fingerprint refuses; so does a time before the receipt.
     let refuse = |community: &str, fingerprint: Option<&[u8; 32]>, member: &str, now: u64| {
@@ -836,7 +839,10 @@ fn the_server_verifies_the_same_bytes_with_charter_alone_and_no_charter_document
         refuse("beta", current.fingerprint(), &g.member, NOW),
         GenesisError::Scope
     );
-    assert_eq!(refuse("alpha", Some(&[7; 32]), &g.member, NOW), GenesisError::Stamp);
+    assert_eq!(
+        refuse("alpha", Some(&[7; 32]), &g.member, NOW),
+        GenesisError::Stamp
+    );
     assert_eq!(
         refuse("alpha", current.fingerprint(), &g.member, NOW - 1),
         GenesisError::Clock
@@ -855,8 +861,7 @@ fn the_server_verifies_the_same_bytes_with_charter_alone_and_no_charter_document
     let mut foreign: Value = serde_json::from_slice(&bytes).unwrap();
     foreign["purpose"] = json!("cvlt.lineage-evidence.v1");
     assert_eq!(
-        cchr::GenesisStampEvidence::from_bytes(&serde_json::to_vec(&foreign).unwrap())
-            .unwrap_err(),
+        cchr::GenesisStampEvidence::from_bytes(&serde_json::to_vec(&foreign).unwrap()).unwrap_err(),
         GenesisError::Invalid
     );
 }

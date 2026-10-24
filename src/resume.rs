@@ -101,7 +101,11 @@ impl ResumeBundle {
     /// One joined community's vault opening, exactly as
     /// [`crate::WalletUnlock::community`] derives it, without any ceremony. A community
     /// not in the bundle is refused: joining it needs the passkey.
-    pub fn community(&self, fingerprint: &[u8; 32], scope: &str) -> Result<PreparedOpen, OpenError> {
+    pub fn community(
+        &self,
+        fingerprint: &[u8; 32],
+        scope: &str,
+    ) -> Result<PreparedOpen, OpenError> {
         let entry = self
             .memberships
             .iter()
@@ -209,13 +213,17 @@ mod tests {
         assert!(back.community(&[3; 32], "garden").is_err());
         let mut long = plain.to_vec();
         long.push(0);
-        assert_eq!(ResumeBundle::decode(&long).err(), Some(ResumeError::Invalid));
+        assert_eq!(
+            ResumeBundle::decode(&long).err(),
+            Some(ResumeError::Invalid)
+        );
         assert_eq!(
             ResumeBundle::decode(&plain[..plain.len() - 1]).err(),
             Some(ResumeError::Invalid)
         );
         assert_eq!(ResumeBundle::decode(&[2]).err(), Some(ResumeError::Invalid));
-        let wallet = ResumeBundle::mint(vec![(([1; 32], "wallet".into()), Zeroizing::new([7; 32]))]);
+        let wallet =
+            ResumeBundle::mint(vec![(([1; 32], "wallet".into()), Zeroizing::new([7; 32]))]);
         assert_eq!(
             ResumeBundle::decode(&wallet.encode()).err(),
             Some(ResumeError::Invalid)
@@ -236,7 +244,11 @@ mod tests {
         for entry in &bundle.memberships {
             assert_ne!(entry.secret.as_slice(), &w);
         }
-        let direct = wallet.community(&[1; 32], "garden").unwrap().device().unwrap();
+        let direct = wallet
+            .community(&[1; 32], "garden")
+            .unwrap()
+            .device()
+            .unwrap();
         let resumed = ResumeBundle::decode(&plain)
             .unwrap()
             .community(&[1; 32], "garden")

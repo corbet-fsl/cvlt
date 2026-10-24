@@ -70,8 +70,8 @@ struct StampProof {
 }
 impl StampProof {
     fn evidence(self, receipt: &Receipt) -> Result<GenesisStampEvidence, EvidenceError> {
-        let presentation =
-            StampPresentation::from_bytes(&self.presentation).map_err(|_| EvidenceError::Invalid)?;
+        let presentation = StampPresentation::from_bytes(&self.presentation)
+            .map_err(|_| EvidenceError::Invalid)?;
         Ok(GenesisStampEvidence::new(
             receipt.clone(),
             &presentation,

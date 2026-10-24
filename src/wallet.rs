@@ -142,17 +142,23 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
         let storage = self.storage.clone();
         let mut store = storage.lock().await;
         self.authorize_wallet_store(&store).await?;
-        let pending =
-            prepare(
-            self.wallet.passport.as_ref().ok_or(WalletRestoreError::Scope)?,
+        let pending = prepare(
+            self.wallet
+                .passport
+                .as_ref()
+                .ok_or(WalletRestoreError::Scope)?,
             &store,
             rng,
-        ).map_err(WalletRestoreError::Passport)?;
+        )
+        .map_err(WalletRestoreError::Passport)?;
         // Original Pending checks its exact owner record and CAS receipt. No
         // request/finish result can escape before its private state is durable.
         let output = pending
             .commit(
-                self.wallet.passport.as_mut().ok_or(WalletRestoreError::Scope)?,
+                self.wallet
+                    .passport
+                    .as_mut()
+                    .ok_or(WalletRestoreError::Scope)?,
                 &mut store,
                 &[],
                 &[],
@@ -235,8 +241,14 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
             return Err(ckmg::Error::Unauthorized);
         }
         Ok(read(
-            self.wallet.passport.as_ref().ok_or(ckmg::Error::Unauthorized)?,
-            self.wallet.record.as_ref().ok_or(ckmg::Error::Unauthorized)?,
+            self.wallet
+                .passport
+                .as_ref()
+                .ok_or(ckmg::Error::Unauthorized)?,
+            self.wallet
+                .record
+                .as_ref()
+                .ok_or(ckmg::Error::Unauthorized)?,
             &store,
         ))
     }

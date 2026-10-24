@@ -92,9 +92,8 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W> Vault<B, C, 
             .map_err(|_| CredentialError::Storage)?
         {
             None => Ok(None),
-            Some(record) => unframe(record, &community, &member, &device).map(|custody| {
-                (!custody.is_empty()).then(|| Zeroizing::new(custody.to_vec()))
-            }),
+            Some(record) => unframe(record, &community, &member, &device)
+                .map(|custody| (!custody.is_empty()).then(|| Zeroizing::new(custody.to_vec()))),
         }
     }
 

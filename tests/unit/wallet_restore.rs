@@ -20,12 +20,12 @@ mod account_genesis_tests;
 mod account_restore_tests;
 #[path = "credential.rs"]
 mod credential_tests;
+#[path = "update_outbox.rs"]
+mod update_outbox_tests;
 #[path = "voucher_custody.rs"]
 mod voucher_custody_tests;
 #[path = "witness_state.rs"]
 mod witness_state_tests;
-#[path = "update_outbox.rs"]
-mod update_outbox_tests;
 
 struct Clock;
 impl ckmg::Clock for Clock {

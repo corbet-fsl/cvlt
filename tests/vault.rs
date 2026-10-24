@@ -1,13 +1,13 @@
 //! Real encrypted storage composition. Unavailable G3/Records/Wallet stay unavailable.
 #[path = "cases/existing.rs"]
 mod existing;
-#[path = "cases/unlock.rs"]
-mod unlock;
-#[path = "cases/resume.rs"]
-mod resume;
 #[cfg(all(feature = "native-records", not(target_arch = "wasm32")))]
 #[path = "cases/records.rs"]
 mod records;
+#[path = "cases/resume.rs"]
+mod resume;
+#[path = "cases/unlock.rs"]
+mod unlock;
 use ckmg::{
     Commit, SecureStore,
     passkey::{PrfOutput, store_cipher, vault_location},

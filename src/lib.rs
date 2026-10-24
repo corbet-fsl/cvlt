@@ -5,9 +5,9 @@ mod community_pin;
 mod compound;
 mod credential;
 mod existing;
+mod index_record;
 mod initial;
 mod lineage;
-mod index_record;
 mod membership_index;
 mod pairing_guest;
 mod read_floors;
@@ -17,14 +17,9 @@ mod retention;
 mod storage;
 mod unlock;
 mod update_outbox;
-mod witness_state;
 mod voucher_custody;
+mod witness_state;
 use ckmg::{Authority, Clock, Entropy, Locator};
-pub use index_record::TorIndexRecord;
-pub use membership_index::{
-    IndexError, IndexRecord, MEMBERSHIP_SCOPE, MembershipEntry, MembershipIndex, Observed, Outcome,
-    WalletIndexRecord, add_entry, read_index,
-};
 pub use community_pin::{CommunityPin, PinnedHead};
 pub use compound::{
     CHECKPOINT_SUBKEYS, CheckpointError, CheckpointPublication, CompoundRecords,
@@ -33,6 +28,7 @@ pub use compound::{
 pub use credential::{CredentialError, CredentialWrite, MAX_COMMUNITY_CREDENTIAL_BYTES};
 use cwst::backend::Backend;
 pub use existing::{OpenError, Owners, PreparedOpen, PreparedRecovery, RecoveryCandidate};
+pub use index_record::TorIndexRecord;
 pub use initial::{
     AcknowledgedInitialCandidate, CurrentInitialLineage, InitialAcknowledgment, InitialCreation,
     InitialError, InitialLineageRead, InitialPhase, InitialPublication, RetainedGenesis,
@@ -44,24 +40,28 @@ pub use lineage::{
     lineage_genesis_action, lineage_genesis_action_for, lineage_stamp_scope,
     publish_lineage_revision, verify_lineage,
 };
+pub use membership_index::{
+    IndexError, IndexRecord, MEMBERSHIP_SCOPE, MembershipEntry, MembershipIndex, Observed, Outcome,
+    WalletIndexRecord, add_entry, read_index,
+};
 pub use pairing_guest::{AcceptedPairing, PairingGuest};
 pub use records::{
     PasskeyRecords, RecordCheckpoint, RecordError, TorLineageRecord, TorPasskeyRecord,
     TorReadRecord,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use resume::NativeResume;
+#[cfg(target_arch = "wasm32")]
+pub use resume::{BrowserResume, erase_local_databases};
+pub use resume::{MAX_RESUME_MEMBERSHIPS, ResumeBundle, ResumeError};
 pub use retention::{
     EvidenceError, LineageEvidence, MAX_LINEAGE_EVIDENCE_BYTES, PreparedLineageEvidence,
 };
 pub use storage::*;
-pub use resume::{MAX_RESUME_MEMBERSHIPS, ResumeBundle, ResumeError};
-#[cfg(target_arch = "wasm32")]
-pub use resume::{BrowserResume, erase_local_databases};
-#[cfg(not(target_arch = "wasm32"))]
-pub use resume::NativeResume;
 pub use unlock::{WALLET_SCOPE, WalletUnlock};
 pub use update_outbox::MAX_UPDATE_OUTBOX_BYTES;
-pub use witness_state::MAX_WITNESS_STATE_BYTES;
 pub use voucher_custody::MAX_VOUCHER_CUSTODY_BYTES;
+pub use witness_state::MAX_WITNESS_STATE_BYTES;
 
 /// A restore lookup distinguishes authenticated absence from unavailable data.
 /// No lookup outcome authorizes a replacement identity. Equal enrolled passkeys

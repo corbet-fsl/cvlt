@@ -105,7 +105,11 @@ impl<N: cdht::Network> IndexRecord for TorIndexRecord<N> {
             }
             cdht::QueuedPublication::Queued => {}
         }
-        let report = self.dht.flush().await.map_err(|_| Err(IndexError::Unavailable))?;
+        let report = self
+            .dht
+            .flush()
+            .await
+            .map_err(|_| Err(IndexError::Unavailable))?;
         if let Some((_, _)) = report.stale.first() {
             // The network held a newer value; the flush cached it as the current one.
             let winner = self
@@ -130,7 +134,7 @@ impl<N: cdht::Network> IndexRecord for TorIndexRecord<N> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::membership_index::{MembershipEntry, MEMBERSHIP_SCOPE, add_entry, read_index};
+    use crate::membership_index::{MEMBERSHIP_SCOPE, MembershipEntry, add_entry, read_index};
     use cdht::Backend;
     use ckmg::passkey::{PrfOutput, passkey_record_writer, store_cipher};
     use std::rc::Rc;
@@ -138,7 +142,10 @@ mod tests {
     /// Five validating nodes in process; only the transport is local. `reach` limits the
     /// holders this view of the network contacts (a lone or eclipsed holder set).
     #[derive(Clone)]
-    struct Nodes(Rc<Vec<cdht::LocalBackend<crate::records::tor::Verifier>>>, u8);
+    struct Nodes(
+        Rc<Vec<cdht::LocalBackend<crate::records::tor::Verifier>>>,
+        u8,
+    );
     impl Nodes {
         fn new() -> Self {
             Self(
@@ -154,8 +161,13 @@ mod tests {
         fn reaching(&self, reach: u8) -> Self {
             Self(self.0.clone(), reach)
         }
-        fn node(&self, node: &cdht::NodeId) -> Result<&cdht::LocalBackend<crate::records::tor::Verifier>, cdht::Error> {
-            self.0.get(usize::from(node[0])).ok_or(cdht::Error::Unavailable)
+        fn node(
+            &self,
+            node: &cdht::NodeId,
+        ) -> Result<&cdht::LocalBackend<crate::records::tor::Verifier>, cdht::Error> {
+            self.0
+                .get(usize::from(node[0]))
+                .ok_or(cdht::Error::Unavailable)
         }
     }
     impl cdht::Network for Nodes {
@@ -191,23 +203,43 @@ mod tests {
             node.create(descriptor).await?;
             node.set(&descriptor.key(), subkey, value).await
         }
-        async fn watch(&self, _: &cdht::NodeId, _: &cdht::RecordKey) -> Result<cdht::WatchId, cdht::Error> {
+        async fn watch(
+            &self,
+            _: &cdht::NodeId,
+            _: &cdht::RecordKey,
+        ) -> Result<cdht::WatchId, cdht::Error> {
             Err(cdht::Error::Unavailable)
         }
-        async fn cancel_watch(&self, _: &cdht::NodeId, _: cdht::WatchId) -> Result<(), cdht::Error> {
+        async fn cancel_watch(
+            &self,
+            _: &cdht::NodeId,
+            _: cdht::WatchId,
+        ) -> Result<(), cdht::Error> {
             Err(cdht::Error::Unavailable)
         }
-        async fn changes(&self, _: &cdht::NodeId, _: cdht::WatchId) -> Result<Vec<cdht::Change>, cdht::Error> {
+        async fn changes(
+            &self,
+            _: &cdht::NodeId,
+            _: cdht::WatchId,
+        ) -> Result<Vec<cdht::Change>, cdht::Error> {
             Err(cdht::Error::Unavailable)
         }
     }
 
     fn handle(network: &Nodes, wallet: u8) -> TorIndexRecord<Nodes> {
         let prf = PrfOutput::from_bytes(&[wallet; 32]).unwrap();
-        TorIndexRecord::new(network.clone(), passkey_record_writer(&prf, MEMBERSHIP_SCOPE).unwrap()).unwrap()
+        TorIndexRecord::new(
+            network.clone(),
+            passkey_record_writer(&prf, MEMBERSHIP_SCOPE).unwrap(),
+        )
+        .unwrap()
     }
     fn cipher(wallet: u8) -> ckmg::passkey::StoreCipher {
-        store_cipher(&PrfOutput::from_bytes(&[wallet; 32]).unwrap(), MEMBERSHIP_SCOPE).unwrap()
+        store_cipher(
+            &PrfOutput::from_bytes(&[wallet; 32]).unwrap(),
+            MEMBERSHIP_SCOPE,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -220,9 +252,15 @@ mod tests {
             let mut two = handle(&network, 9);
             let first = MembershipEntry::new("garden.example", [1; 32]).unwrap();
             let second = MembershipEntry::new("pond.example", [2; 32]).unwrap();
-            assert_eq!(add_entry(&mut one, &c, &mut rng, first.clone()).await, Ok(Outcome::Confirmed));
+            assert_eq!(
+                add_entry(&mut one, &c, &mut rng, first.clone()).await,
+                Ok(Outcome::Confirmed)
+            );
             // Device two has not read yet: its first read happens inside add_entry.
-            assert_eq!(add_entry(&mut two, &c, &mut rng, second.clone()).await, Ok(Outcome::Confirmed));
+            assert_eq!(
+                add_entry(&mut two, &c, &mut rng, second.clone()).await,
+                Ok(Outcome::Confirmed)
+            );
             // A brand-new device with only the wallet reads both.
             let mut fresh = handle(&network, 9);
             let (_, index) = read_index(&mut fresh, &c).await.unwrap().unwrap();
@@ -233,7 +271,10 @@ mod tests {
             // A stale handle (never read) publishes blind and merges through the conflict.
             let mut blind = handle(&network, 9);
             let third = MembershipEntry::new("lake.example", [3; 32]).unwrap();
-            assert_eq!(add_entry(&mut blind, &c, &mut rng, third.clone()).await, Ok(Outcome::Confirmed));
+            assert_eq!(
+                add_entry(&mut blind, &c, &mut rng, third.clone()).await,
+                Ok(Outcome::Confirmed)
+            );
             let (_, index) = read_index(&mut fresh, &c).await.unwrap().unwrap();
             assert_eq!(index.len(), 3);
         });

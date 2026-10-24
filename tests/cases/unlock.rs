@@ -88,50 +88,73 @@ async fn reopen(opening: PreparedOpen, backend: Memory) -> Option<ckmg::Lineage>
     Some(initial.receipt().attested_lineage().ok()?.0.clone())
 }
 
-shared!(one_confirmation_opens_the_wallet_and_every_community_vault, {
-    let mut client = passkeys().await;
-    let wallet = WalletUnlock::new(unlock(&mut client).await);
-    drop(client); // the only confirmation of this app start
-    let mut lineages = Vec::new();
-    for (scope, id) in COMMUNITIES {
-        let backend = Memory::new();
-        let created = create(wallet.community(&id, scope).unwrap(), scope, backend.clone()).await;
-        // The same unlock reopens it again, still without a ceremony.
-        let again = reopen(wallet.community(&id, scope).unwrap(), backend).await;
-        assert!(again == Some(created.clone()));
-        lineages.push(created);
+shared!(
+    one_confirmation_opens_the_wallet_and_every_community_vault,
+    {
+        let mut client = passkeys().await;
+        let wallet = WalletUnlock::new(unlock(&mut client).await);
+        drop(client); // the only confirmation of this app start
+        let mut lineages = Vec::new();
+        for (scope, id) in COMMUNITIES {
+            let backend = Memory::new();
+            let created = create(
+                wallet.community(&id, scope).unwrap(),
+                scope,
+                backend.clone(),
+            )
+            .await;
+            // The same unlock reopens it again, still without a ceremony.
+            let again = reopen(wallet.community(&id, scope).unwrap(), backend).await;
+            assert!(again == Some(created.clone()));
+            lineages.push(created);
+        }
+        // Every community has its own device key and locator: nothing crosses scopes.
+        let devices: std::collections::BTreeSet<_> = COMMUNITIES
+            .iter()
+            .map(|(scope, id)| {
+                *wallet
+                    .community(id, scope)
+                    .unwrap()
+                    .device()
+                    .unwrap()
+                    .value()
+            })
+            .chain([*wallet.wallet().unwrap().device().unwrap().value()])
+            .collect();
+        assert_eq!(devices.len(), COMMUNITIES.len() + 1);
+        let locators: std::collections::BTreeSet<_> = COMMUNITIES
+            .iter()
+            .map(|(scope, id)| *wallet.community(id, scope).unwrap().locator().as_bytes())
+            .chain([*wallet.wallet().unwrap().locator().as_bytes()])
+            .collect();
+        assert_eq!(locators.len(), COMMUNITIES.len() + 1);
+        assert!(lineages[0] != lineages[1]);
+        // The wallet scope is not a community.
+        assert!(wallet.community(&[9; 32], "wallet").is_err());
     }
-    // Every community has its own device key and locator: nothing crosses scopes.
-    let devices: std::collections::BTreeSet<_> = COMMUNITIES
-        .iter()
-        .map(|(scope, id)| *wallet.community(id, scope).unwrap().device().unwrap().value())
-        .chain([*wallet.wallet().unwrap().device().unwrap().value()])
-        .collect();
-    assert_eq!(devices.len(), COMMUNITIES.len() + 1);
-    let locators: std::collections::BTreeSet<_> = COMMUNITIES
-        .iter()
-        .map(|(scope, id)| *wallet.community(id, scope).unwrap().locator().as_bytes())
-        .chain([*wallet.wallet().unwrap().locator().as_bytes()])
-        .collect();
-    assert_eq!(locators.len(), COMMUNITIES.len() + 1);
-    assert!(lineages[0] != lineages[1]);
-    // The wallet scope is not a community.
-    assert!(wallet.community(&[9; 32], "wallet").is_err());
-});
+);
 
 shared!(the_wallet_vault_keeps_the_direct_passkey_derivation, {
     let mut client = passkeys().await;
     let direct = PreparedOpen::new(unlock(&mut client).await, "wallet").unwrap();
-    let once = WalletUnlock::new(unlock(&mut client).await).wallet().unwrap();
+    let once = WalletUnlock::new(unlock(&mut client).await)
+        .wallet()
+        .unwrap();
     assert_eq!(direct.locator().as_bytes(), once.locator().as_bytes());
-    assert_eq!(direct.device().unwrap().value(), once.device().unwrap().value());
+    assert_eq!(
+        direct.device().unwrap().value(),
+        once.device().unwrap().value()
+    );
     // A community never opens with the raw wallet PRF derivation.
     let raw = PreparedOpen::new(unlock(&mut client).await, "garden").unwrap();
     let derived = WalletUnlock::new(unlock(&mut client).await)
         .community(&[1; 32], "garden")
         .unwrap();
     assert_ne!(raw.locator().as_bytes(), derived.locator().as_bytes());
-    assert_ne!(raw.device().unwrap().value(), derived.device().unwrap().value());
+    assert_ne!(
+        raw.device().unwrap().value(),
+        derived.device().unwrap().value()
+    );
 });
 
 shared!(a_different_wallet_passkey_opens_no_community_vault, {
@@ -141,7 +164,12 @@ shared!(a_different_wallet_passkey_opens_no_community_vault, {
     let wrong = WalletUnlock::new(unlock(&mut stranger).await);
     for (scope, id) in COMMUNITIES {
         let backend = Memory::new();
-        create(wallet.community(&id, scope).unwrap(), scope, backend.clone()).await;
+        create(
+            wallet.community(&id, scope).unwrap(),
+            scope,
+            backend.clone(),
+        )
+        .await;
         let opening = wrong.community(&id, scope).unwrap();
         assert_ne!(
             opening.locator().as_bytes(),
@@ -166,7 +194,12 @@ shared!(a_synced_wallet_passkey_restores_every_community_root, {
     let mut records = Vec::new();
     for (scope, id) in COMMUNITIES {
         let backend = Memory::new();
-        let lineage = create(wallet.community(&id, scope).unwrap(), scope, backend.clone()).await;
+        let lineage = create(
+            wallet.community(&id, scope).unwrap(),
+            scope,
+            backend.clone(),
+        )
+        .await;
         records.push((scope, id, copy(&backend).await, lineage));
     }
     // A new device: the provider syncs the same wallet passkey; ONE confirmation.
@@ -182,21 +215,27 @@ shared!(a_synced_wallet_passkey_restores_every_community_root, {
     }
 });
 
-shared!(a_new_community_at_a_reused_address_opens_nothing_of_the_old_one, {
-    let mut client = passkeys().await;
-    let wallet = WalletUnlock::new(unlock(&mut client).await);
-    drop(client);
-    // The old community at "garden" ended; a new one was founded at the same address.
-    let (old, new) = ([1; 32], [4; 32]);
-    let backend = Memory::new();
-    let opening = wallet.community(&old, "garden").unwrap();
-    let lineage = create(opening, "garden", backend.clone()).await;
-    let reused = wallet.community(&new, "garden").unwrap();
-    let previous = wallet.community(&old, "garden").unwrap();
-    assert_ne!(reused.locator().as_bytes(), previous.locator().as_bytes());
-    assert_ne!(reused.device().unwrap().value(), previous.device().unwrap().value());
-    // The old community's vault does not open under the new identity ...
-    assert!(reopen(reused, copy(&backend).await).await.is_none());
-    // ... and still opens under its own.
-    assert!(reopen(previous, backend).await == Some(lineage));
-});
+shared!(
+    a_new_community_at_a_reused_address_opens_nothing_of_the_old_one,
+    {
+        let mut client = passkeys().await;
+        let wallet = WalletUnlock::new(unlock(&mut client).await);
+        drop(client);
+        // The old community at "garden" ended; a new one was founded at the same address.
+        let (old, new) = ([1; 32], [4; 32]);
+        let backend = Memory::new();
+        let opening = wallet.community(&old, "garden").unwrap();
+        let lineage = create(opening, "garden", backend.clone()).await;
+        let reused = wallet.community(&new, "garden").unwrap();
+        let previous = wallet.community(&old, "garden").unwrap();
+        assert_ne!(reused.locator().as_bytes(), previous.locator().as_bytes());
+        assert_ne!(
+            reused.device().unwrap().value(),
+            previous.device().unwrap().value()
+        );
+        // The old community's vault does not open under the new identity ...
+        assert!(reopen(reused, copy(&backend).await).await.is_none());
+        // ... and still opens under its own.
+        assert!(reopen(previous, backend).await == Some(lineage));
+    }
+);

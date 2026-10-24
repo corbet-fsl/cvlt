@@ -6,10 +6,10 @@ use ckyh::lineage::Assertion;
 mod records;
 mod revision;
 mod stamp;
+pub use cchr::{GenesisError, StampTrust};
 pub use records::{LineageRead, LineageRecords};
 pub use revision::publish_lineage_revision;
 pub(crate) use stamp::verify_genesis;
-pub use cchr::{GenesisError, StampTrust};
 pub use stamp::{
     GenesisStampEvidence, LINEAGE_GENESIS_ACTION, StampKeyPeriod, genesis_stamp_scope,
     lineage_genesis_action, lineage_genesis_action_for, lineage_stamp_scope,
