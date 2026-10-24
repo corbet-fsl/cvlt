@@ -4,7 +4,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 #![allow(dead_code, unused_imports)]
 use cchr::{Charter, Configuration, RevisionError, VerifiedCharter, pair_payload};
-use cvlt::{EvidenceError, LineageError, LineageEvidence, StampKeyPeriod, StampTrust, lineage_stamp_scope};
 use ckmg::{
     Authority, Authorization, Binding, Change, Commit, DeviceInfo, Error, Lineage, Locator,
     PairingApproval, Receipt,
@@ -14,6 +13,9 @@ use cpsd::{
     StampPresentation, StampScope, rand::rngs::OsRng,
 };
 use csgn::{Kind, SecretKey, Signer};
+use cvlt::{
+    EvidenceError, LineageError, LineageEvidence, StampKeyPeriod, StampTrust, lineage_stamp_scope,
+};
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
@@ -189,7 +191,6 @@ fn fixture() -> Fixture {
     }
 }
 
-
 type Machine = ckmg::Keys<Memory, Clock, ckmg::SystemEntropy, Allow>;
 fn machine() -> Machine {
     ckmg::Keys::new(Memory::default(), Clock, ckmg::SystemEntropy, Allow)
@@ -354,7 +355,11 @@ fn revision_evidence_needs_the_stamp_and_the_hosts_signature_from_the_current_de
         let good_digest = digest(&p.receipt, &member, &key, &SESSION);
         let presentation = stamp_over(&mut f, current, good_digest);
         let signature = host_signature(&mut p, &good_digest).await;
-        let c = Ctx { current, stamps: &stamps, lineage: &p.anchor };
+        let c = Ctx {
+            current,
+            stamps: &stamps,
+            lineage: &p.anchor,
+        };
 
         // Valid: the host is in the CURRENT lineage's devices.
         let (host, new_key, revision) =
@@ -365,9 +370,24 @@ fn revision_evidence_needs_the_stamp_and_the_hosts_signature_from_the_current_de
 
         // A removed host (the current lineage no longer lists its key) is refused, valid stamp.
         let other = pair(&member, 3, 4).await;
-        let removed = Ctx { lineage: &other.anchor, ..Ctx { current, stamps: &stamps, lineage: &p.anchor } };
+        let removed = Ctx {
+            lineage: &other.anchor,
+            ..Ctx {
+                current,
+                stamps: &stamps,
+                lineage: &p.anchor,
+            }
+        };
         assert_eq!(
-            verify(&removed, &p.receipt, &presentation, &signature, &SESSION, &member).unwrap_err(),
+            verify(
+                &removed,
+                &p.receipt,
+                &presentation,
+                &signature,
+                &SESSION,
+                &member
+            )
+            .unwrap_err(),
             RevisionError::Host
         );
         // A stamp without the host signature is refused ...
@@ -398,7 +418,15 @@ fn revision_evidence_needs_the_stamp_and_the_hosts_signature_from_the_current_de
         }
         // A session the verifier does not know changes the digest it recomputes.
         assert_eq!(
-            verify(&c, &p.receipt, &presentation, &signature, &[78; 32], &member).unwrap_err(),
+            verify(
+                &c,
+                &p.receipt,
+                &presentation,
+                &signature,
+                &[78; 32],
+                &member
+            )
+            .unwrap_err(),
             RevisionError::Host
         );
         // A receipt that is not a DeviceAuthorized revision above 1 is refused.
@@ -414,16 +442,40 @@ fn revision_evidence_needs_the_stamp_and_the_hosts_signature_from_the_current_de
             RevisionError::Scope
         );
         let mut beta_owner = charter("beta", NOW, &[]);
-        let beta = Ctx { current: beta_owner.current(NOW).unwrap(), stamps: &stamps, lineage: &p.anchor };
+        let beta = Ctx {
+            current: beta_owner.current(NOW).unwrap(),
+            stamps: &stamps,
+            lineage: &p.anchor,
+        };
         assert_eq!(
-            verify(&beta, &p.receipt, &presentation, &signature, &SESSION, &member).unwrap_err(),
+            verify(
+                &beta,
+                &p.receipt,
+                &presentation,
+                &signature,
+                &SESSION,
+                &member
+            )
+            .unwrap_err(),
             RevisionError::Scope
         );
         // A revoked member is refused.
         let mut revoked_owner = charter("alpha", NOW, &[&member]);
-        let revoked = Ctx { current: revoked_owner.current(NOW).unwrap(), stamps: &stamps, lineage: &p.anchor };
+        let revoked = Ctx {
+            current: revoked_owner.current(NOW).unwrap(),
+            stamps: &stamps,
+            lineage: &p.anchor,
+        };
         assert!(matches!(
-            verify(&revoked, &p.receipt, &presentation, &signature, &SESSION, &member).unwrap_err(),
+            verify(
+                &revoked,
+                &p.receipt,
+                &presentation,
+                &signature,
+                &SESSION,
+                &member
+            )
+            .unwrap_err(),
             RevisionError::Policy(_)
         ));
     });

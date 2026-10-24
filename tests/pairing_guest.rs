@@ -213,13 +213,9 @@ fn the_guest_signs_only_pairing_possession_for_its_own_key() {
             .await
             .unwrap();
         let device = *request.device.value();
-        let add = ckmg::PairingPossession::new(
-            SCOPE,
-            ckmg::PairingStep::Add,
-            "challenge-add",
-            &device,
-        )
-        .unwrap();
+        let add =
+            ckmg::PairingPossession::new(SCOPE, ckmg::PairingStep::Add, "challenge-add", &device)
+                .unwrap();
         let signature = guest.sign_possession(&add).unwrap();
         ckmg::verify_ed25519(&device, &add.message(), &signature).unwrap();
         // Valid for the pairing purpose only: never as a join, session or salt message.
@@ -311,9 +307,8 @@ fn one_session_unlock_pairs_several_scopes_with_one_ceremony() {
                 .await
                 .unwrap();
             let device = *request.device.value();
-            let add =
-                ckmg::PairingPossession::new(scope, ckmg::PairingStep::Add, "add", &device)
-                    .unwrap();
+            let add = ckmg::PairingPossession::new(scope, ckmg::PairingStep::Add, "add", &device)
+                .unwrap();
             let add_signature = guest.sign_possession(&add).unwrap();
             ckmg::verify_ed25519(&device, &add.message(), &add_signature).unwrap();
             devices.push((scope, fingerprint, backend, request, live, device));
