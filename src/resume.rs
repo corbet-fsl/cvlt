@@ -77,8 +77,11 @@ pub enum ResumeError {
     Invalid,
 }
 
+/// One entry minted into a [`ResumeBundle`]: ((fingerprint, scope), secret).
+pub(crate) type ResumeMintEntry = (([u8; 32], String), Zeroizing<[u8; 32]>);
+
 impl ResumeBundle {
-    pub(crate) fn mint(memberships: Vec<(([u8; 32], String), Zeroizing<[u8; 32]>)>) -> Self {
+    pub(crate) fn mint(memberships: Vec<ResumeMintEntry>) -> Self {
         Self {
             memberships: memberships
                 .into_iter()
