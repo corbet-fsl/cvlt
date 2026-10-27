@@ -1,23 +1,97 @@
-//! Persistent unlock (DESIGN-secure-convenience part 4, M6): the device reopens its joined
-//! communities after a restart from the sealed bundle, with NO passkey ceremony; forgetting
-//! the bundle (explicit lock, opt-out, revocation) forces one again. The bundle never holds W.
-use super::existing::{passkeys, unlock};
-use cvlt::{ResumeBundle, WalletUnlock};
+//! Persistent unlock v2 (U2b): the device reopens its joined communities after a restart
+//! from the sealed bundle of per-community `ckmg::DeviceDelegation`s, with NO passkey
+//! ceremony; forgetting the bundle (explicit lock, opt-out, revocation) forces one again.
+//! The bundle never holds W or U_c (byte tests in `src/resume/tests.rs`).
+use ckmg::{Authorization, Binding, DeviceInfo, Error, Keys, Purpose, Scope};
+use cvlt::ResumeBundle;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 const JOINED: [([u8; 32], &str); 2] = [([1; 32], "garden"), ([2; 32], "orchard")];
 
 fn device(bundle: &ResumeBundle, (fingerprint, scope): ([u8; 32], &str)) -> ckmg::PublicKey {
     bundle
-        .community(&fingerprint, scope)
+        .delegation(&fingerprint, scope)
         .unwrap()
-        .device()
-        .unwrap()
+        .device_public_key()
 }
 
-async fn minted() -> (WalletUnlock, ResumeBundle) {
-    let wallet = WalletUnlock::new(unlock(&mut passkeys().await).await);
-    let bundle = wallet.resume_bundle(&JOINED).unwrap();
-    (wallet, bundle)
+#[derive(Clone)]
+struct Time;
+impl ckmg::Clock for Time {
+    fn now(&mut self) -> Result<u64, Error> {
+        Ok(1000)
+    }
+}
+
+/// Permissive test authority; not production membership.
+struct Live;
+impl ckmg::Authority for Live {
+    async fn check(&mut self, _: Authorization<'_>) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+/// The delegate keys enrolled per joined community, in `JOINED` order.
+struct Enrolled(Vec<ckmg::PublicKey>);
+impl Enrolled {
+    fn community(&self, fingerprint: &[u8; 32], _: &str) -> Result<&ckmg::PublicKey, ()> {
+        let index = JOINED.iter().position(|joined| &joined.0 == fingerprint);
+        index.map(|index| &self.0[index]).ok_or(())
+    }
+}
+
+/// Test-only in-memory key store.
+#[derive(Clone, Default)]
+struct Memory(Rc<RefCell<HashMap<ckmg::Locator, Vec<u8>>>>);
+impl ckmg::SecureStore for Memory {
+    async fn load(&mut self, location: &ckmg::Locator) -> Result<Option<Vec<u8>>, Error> {
+        Ok(self.0.borrow().get(location).cloned())
+    }
+    async fn compare_exchange(
+        &mut self,
+        location: &ckmg::Locator,
+        expected: Option<[u8; 32]>,
+        next: &[u8],
+    ) -> Result<ckmg::Commit, Error> {
+        let mut data = self.0.borrow_mut();
+        if data.get(location).map(|v| *blake3::hash(v).as_bytes()) != expected {
+            return Ok(ckmg::Commit::Conflict);
+        }
+        data.insert(*location, next.to_vec());
+        Ok(ckmg::Commit::Committed)
+    }
+}
+
+/// A ceremony's community custody per joined community, and the delegation enrolled under
+/// each while it is open (the PRF's origin is irrelevant here; `src/resume/tests.rs`
+/// derives it from `W` and checks the bytes).
+async fn mint(joined: &[([u8; 32], &str)]) -> (Enrolled, ResumeBundle) {
+    let mut bundle = ResumeBundle::new();
+    let mut enrolled = Vec::new();
+    for (fingerprint, scope) in joined {
+        let prf = ckmg::passkey::PrfOutput::from_bytes(&[fingerprint[0] ^ 0x40; 32]).unwrap();
+        let mut keys = Keys::new(Memory::default(), Time, ckmg::SystemEntropy, Live);
+        let receipt = keys
+            .create_scope(
+                &prf,
+                Binding::new(scope, "member").unwrap(),
+                DeviceInfo::new("device", b"credential").unwrap(),
+                b"registration",
+            )
+            .await
+            .unwrap();
+        keys.acknowledge(receipt.operation).await.unwrap();
+        let purposes = [Purpose::new(Scope::Member, "board", 1).unwrap()];
+        let (receipt, delegation) = keys.delegate_device(&purposes, b"ceremony").await.unwrap();
+        keys.acknowledge(receipt.operation).await.unwrap();
+        enrolled.push(delegation.device_public_key());
+        bundle.insert(*fingerprint, scope, delegation).unwrap();
+    }
+    (Enrolled(enrolled), bundle)
+}
+
+async fn minted() -> (Enrolled, ResumeBundle) {
+    mint(&JOINED).await
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -41,15 +115,11 @@ mod native {
                 .load()
                 .expect("resumed without a ceremony");
             for joined in JOINED {
-                let direct = wallet
-                    .community(&joined.0, joined.1)
-                    .unwrap()
-                    .device()
-                    .unwrap();
+                let direct = *wallet.community(&joined.0, joined.1).unwrap();
                 assert_eq!(device(&resumed, joined), direct);
             }
             // A community not yet joined is not in the bundle: it needs the passkey (a stamp).
-            assert!(resumed.community(&[3; 32], "meadow").is_err());
+            assert!(resumed.delegation(&[3; 32], "meadow").is_none());
             assert_eq!(resumed.memberships().count(), 2);
         });
     }
@@ -62,7 +132,7 @@ mod native {
             let store = store(dir.path());
             store.save(&bundle).unwrap();
             #[cfg(unix)]
-            for name in ["resume.v1", "resume.v1.key"] {
+            for name in ["resume.v2", "resume.v2.key"] {
                 use std::os::unix::fs::PermissionsExt;
                 let mode = std::fs::metadata(dir.path().join(name))
                     .unwrap()
@@ -73,8 +143,8 @@ mod native {
             assert!(!store.in_os_keyring());
             store.forget().unwrap();
             assert!(store.load().is_none());
-            assert!(!dir.path().join("resume.v1").exists());
-            assert!(!dir.path().join("resume.v1.key").exists());
+            assert!(!dir.path().join("resume.v2").exists());
+            assert!(!dir.path().join("resume.v2.key").exists());
             store.forget().unwrap();
         });
     }
@@ -87,10 +157,10 @@ mod native {
             store(dir.path()).save(&bundle).unwrap();
             let other = NativeResume::new(dir.path(), b"wallet.example.test\0account-2", None);
             assert!(other.load().is_none());
-            assert!(!dir.path().join("resume.v1").exists());
+            assert!(!dir.path().join("resume.v2").exists());
 
             store(dir.path()).save(&bundle).unwrap();
-            let path = dir.path().join("resume.v1");
+            let path = dir.path().join("resume.v2");
             let mut record = std::fs::read(&path).unwrap();
             let last = record.len() - 1;
             record[last] ^= 1;
@@ -98,7 +168,7 @@ mod native {
             assert!(store(dir.path()).load().is_none());
 
             store(dir.path()).save(&bundle).unwrap();
-            std::fs::write(dir.path().join("resume.v1.key"), [0; 31]).unwrap();
+            std::fs::write(dir.path().join("resume.v2.key"), [0; 31]).unwrap();
             assert!(store(dir.path()).load().is_none());
             assert!(store(dir.path()).load().is_none());
         });
@@ -110,7 +180,8 @@ mod native {
             let dir = tempfile::tempdir().unwrap();
             let (wallet, bundle) = minted().await;
             store(dir.path()).save(&bundle).unwrap();
-            let one = wallet.resume_bundle(&JOINED[..1]).unwrap();
+            let (_, one) = mint(&JOINED[..1]).await;
+            let _ = wallet;
             store(dir.path()).save(&one).unwrap();
             assert_eq!(store(dir.path()).load().unwrap().memberships().count(), 1);
         });
@@ -141,7 +212,7 @@ mod native {
             store.save(&bundle).unwrap();
             assert_eq!(
                 store.in_os_keyring(),
-                !dir.path().join("resume.v1.key").exists()
+                !dir.path().join("resume.v2.key").exists()
             );
             assert!(store.load().is_some());
             store.forget().unwrap();
@@ -223,7 +294,7 @@ mod native {
                 );
                 store.save(&bundle).unwrap();
                 assert!(!store.in_os_keyring());
-                let key = vault.join("resume.v1.key");
+                let key = vault.join("resume.v2.key");
                 let mode = std::os::unix::fs::PermissionsExt::mode(
                     &std::fs::metadata(&key).unwrap().permissions(),
                 );
@@ -282,11 +353,7 @@ export async function probeResumeKey(name) {
             .load()
             .await
             .expect("resumed without a ceremony");
-        let direct = wallet
-            .community(&JOINED[0].0, JOINED[0].1)
-            .unwrap()
-            .device()
-            .unwrap();
+        let direct = *wallet.community(&JOINED[0].0, JOINED[0].1).unwrap();
         assert_eq!(device(&resumed, JOINED[0]), direct);
         let probe = js_sys::Array::from(&probe_resume_key(name).await.unwrap());
         assert_eq!(probe.get(0).as_bool(), Some(true), "a CryptoKey object");

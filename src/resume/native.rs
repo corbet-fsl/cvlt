@@ -15,8 +15,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
-const RECORD_FILE: &str = "resume.v1";
-const KEY_FILE: &str = "resume.v1.key";
+const RECORD_FILE: &str = "resume.v2";
+const KEY_FILE: &str = "resume.v2.key";
 const NONCE: usize = 12;
 
 /// The native persistent unlock of one wallet binding.
@@ -48,7 +48,7 @@ impl NativeResume {
         let mut nonce = [0; NONCE];
         getrandom::fill(&mut nonce).map_err(|_| ResumeError::Storage)?;
         let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key.as_slice()));
-        let plain = bundle.encode();
+        let plain = bundle.encode()?;
         let aad = aad(&self.binding);
         let sealed = cipher
             .encrypt(

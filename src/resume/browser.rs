@@ -48,7 +48,7 @@ impl BrowserResume {
 
     /// Seal `bundle` as this device's persistent unlock, replacing any earlier one.
     pub async fn save(&self, bundle: &ResumeBundle) -> Result<(), ResumeError> {
-        let plain = bundle.encode();
+        let plain = bundle.encode()?;
         resume_save(&self.name, &aad(&self.binding), &plain)
             .await
             .map(|_| ())

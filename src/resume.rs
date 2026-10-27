@@ -1,21 +1,28 @@
-//! Persistent unlock (DESIGN-secure-convenience-2026-10-23 part 4, decisions M5/M6):
-//! a device stays unlocked across restarts without a passkey ceremony.
+//! Persistent unlock v2 (U2b; DESIGN-secure-convenience-2026-10-23 part 4, M5/M6, as
+//! corrected by the X1 HIGH finding): a device stays unlocked across restarts for the
+//! communities it has already joined, without a passkey ceremony.
 //!
-//! What is persisted is the NARROWER [`ResumeBundle`]: this device's opened material for
-//! the communities it has ALREADY joined, i.e. each community's unlock secret
-//! `U_c` (see [`crate::unlock`]). `U_c` opens that community's vault and yields its device
-//! key, and nothing else: it is a one-way derivation of the wallet passkey's PRF output
-//! `W`, which is NEVER part of the bundle. A copied profile therefore yields at most this
-//! device's role in its existing memberships until the member revokes the device. A new
-//! community still needs a stamp, so `W` comes from the passkey then, as before.
+//! What is persisted is, per joined community, ONE [`ckmg::DeviceDelegation`]: a fresh
+//! device key from this device's own entropy (never derived from a PRF), enrolled in that
+//! community's lineage as a delegate, plus only the granted epoch's member-purpose
+//! secrets on ckmg's closed allowlist. The bundle never holds the wallet PRF output `W`,
+//! a community unlock secret `U_c`, a root, the identity, history, the ring key, the
+//! device seed or a passkey record reader or writer. A resumed start therefore opens
+//! community sessions (as the delegate) and nothing else: the wallet, new communities,
+//! pairing, rotation, lineage changes, restore and every per-passkey record still need
+//! the passkey. A revoked delegate is rotated out of the lineage, and the server checks
+//! the current lineage per request.
 //!
-//! The bundle is minted where the openings are minted (M5): only
-//! [`crate::WalletUnlock::resume_bundle`] creates one. It has no constructor from bytes
-//! outside the sealed stores of this module, no path back to a [`crate::WalletUnlock`], and
-//! no wallet opening:
+//! Enrolment rides on a ceremony that happens anyway: the caller mints each delegation
+//! with `ckmg::Keys::delegate_device` while that ceremony's custody is open and adds it
+//! with [`ResumeBundle::insert`]. There is no path from a bundle to a wallet opening, a
+//! community opening or a PRF:
 //!
 //! ```compile_fail
 //! fn wallet(bundle: &cvlt::ResumeBundle) { let _ = bundle.wallet(); }
+//! ```
+//! ```compile_fail
+//! fn opening(bundle: &cvlt::ResumeBundle) { let _ = bundle.community(&[0; 32], "garden"); }
 //! ```
 //! ```compile_fail
 //! fn back(bundle: cvlt::ResumeBundle) -> cvlt::WalletUnlock { bundle.into() }
@@ -32,9 +39,10 @@
 //! - browser ([`BrowserResume`]): a WebCrypto AES-GCM key generated with
 //!   `extractable: false`, kept as a `CryptoKey` in IndexedDB on the wallet origin.
 //!
-//! Every failure to open (missing, evicted, tampered, other binding) reads as "no unlock":
-//! one passkey confirmation, never fail-open.
-use crate::{OpenError, PreparedOpen};
+//! Every failure to open (missing, evicted, tampered, other binding, a delegation whose
+//! lineage does not verify or does not list its key) reads as "no unlock": one passkey
+//! confirmation, never fail-open.
+use ckmg::DeviceDelegation;
 use zeroize::Zeroizing;
 
 #[cfg(target_arch = "wasm32")]
@@ -47,88 +55,113 @@ pub use browser::{BrowserResume, erase_local_databases};
 pub use native::NativeResume;
 
 /// Additional authenticated data prefix of every sealed bundle.
-const AAD_PREFIX: &[u8] = b"cvlt.resume.v1\0";
-const VERSION: u8 = 1;
+const AAD_PREFIX: &[u8] = b"cvlt.resume.v2\0";
+const VERSION: u8 = 2;
 /// Upper bound on memberships in one bundle (decode refuses more).
 pub const MAX_RESUME_MEMBERSHIPS: usize = 4096;
 const MAX_SCOPE: usize = 1024;
 
-/// One joined community's opened material: its identity, its Store scope and its
-/// community unlock secret `U_c`. Never the wallet PRF output.
+/// One joined community's resume custody: its founding-key fingerprint, its Store scope
+/// and this device's delegation in it. Never `U_c`, never the wallet PRF output.
 struct Membership {
     fingerprint: [u8; 32],
     scope: String,
-    secret: Zeroizing<[u8; 32]>,
+    delegation: DeviceDelegation,
 }
 
-/// The persisted unlock of this device: the openings of the communities it has
-/// already joined. No Debug, Clone or serializer; wiped on drop. Holding it is not
-/// authentication anywhere.
+/// The persisted unlock of this device: one delegation per joined community. No Debug,
+/// Clone or serializer; the delegations wipe their secrets on drop. Holding it opens
+/// community sessions as the delegate only.
+#[derive(Default)]
 pub struct ResumeBundle {
     memberships: Vec<Membership>,
 }
 
-/// Error of a resume store.
+/// Error of a resume bundle or store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResumeError {
     /// The platform store could not be read or written.
     Storage,
-    /// The bundle is too large or malformed.
+    /// The bundle is too large or malformed, or a delegation does not belong to its scope.
     Invalid,
 }
 
-/// One entry minted into a [`ResumeBundle`]: ((fingerprint, scope), secret).
-pub(crate) type ResumeMintEntry = (([u8; 32], String), Zeroizing<[u8; 32]>);
-
 impl ResumeBundle {
-    pub(crate) fn mint(memberships: Vec<ResumeMintEntry>) -> Self {
-        Self {
-            memberships: memberships
-                .into_iter()
-                .map(|((fingerprint, scope), secret)| Membership {
-                    fingerprint,
-                    scope,
-                    secret,
-                })
-                .collect(),
-        }
+    /// An empty bundle (nothing enrolled yet).
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    /// The joined communities this bundle opens, as (fingerprint, scope).
+    /// Enrol one joined community: `delegation` is what `ckmg::Keys::delegate_device`
+    /// returned during a ceremony that happened anyway. It must be granted in the
+    /// community named `scope`; the wallet scope is refused. A later delegation for the
+    /// same community replaces the earlier one (re-delegation).
+    pub fn insert(
+        &mut self,
+        fingerprint: [u8; 32],
+        scope: &str,
+        delegation: DeviceDelegation,
+    ) -> Result<(), ResumeError> {
+        checked_scope(scope, &delegation)?;
+        self.remove(&fingerprint, scope);
+        if self.memberships.len() >= MAX_RESUME_MEMBERSHIPS {
+            return Err(ResumeError::Invalid);
+        }
+        self.memberships.push(Membership {
+            fingerprint,
+            scope: scope.to_owned(),
+            delegation,
+        });
+        Ok(())
+    }
+
+    /// Drop one community's delegation (revoked, left, or stale); whether one was held.
+    pub fn remove(&mut self, fingerprint: &[u8; 32], scope: &str) -> bool {
+        let before = self.memberships.len();
+        self.memberships
+            .retain(|entry| !(&entry.fingerprint == fingerprint && entry.scope == scope));
+        self.memberships.len() != before
+    }
+
+    /// Whether nothing is enrolled.
+    pub fn is_empty(&self) -> bool {
+        self.memberships.is_empty()
+    }
+
+    /// The joined communities this bundle resumes, as (fingerprint, scope).
     pub fn memberships(&self) -> impl Iterator<Item = (&[u8; 32], &str)> {
         self.memberships
             .iter()
             .map(|entry| (&entry.fingerprint, entry.scope.as_str()))
     }
 
-    /// One joined community's vault opening, exactly as
-    /// [`crate::WalletUnlock::community`] derives it, without any ceremony. A community
-    /// not in the bundle is refused: joining it needs the passkey.
-    pub fn community(
-        &self,
-        fingerprint: &[u8; 32],
-        scope: &str,
-    ) -> Result<PreparedOpen, OpenError> {
-        let entry = self
-            .memberships
+    /// This device's delegation in one joined community, without any ceremony. A
+    /// community not in the bundle has none: joining it needs the passkey.
+    pub fn delegation(&self, fingerprint: &[u8; 32], scope: &str) -> Option<&DeviceDelegation> {
+        self.memberships
             .iter()
             .find(|entry| &entry.fingerprint == fingerprint && entry.scope == scope)
-            .ok_or(OpenError::Composition(crate::Error::Scope))?;
-        PreparedOpen::from_prf(entry.secret.as_slice(), scope)
+            .map(|entry| &entry.delegation)
     }
 
     /// Plain encoding, only ever handed to a sealing store of this module.
-    fn encode(&self) -> Zeroizing<Vec<u8>> {
-        let mut out = Zeroizing::new(Vec::with_capacity(3 + self.memberships.len() * 100));
+    fn encode(&self) -> Result<Zeroizing<Vec<u8>>, ResumeError> {
+        let mut out = Zeroizing::new(Vec::with_capacity(5 + self.memberships.len() * 512));
         out.push(VERSION);
         out.extend_from_slice(&(self.memberships.len() as u32).to_le_bytes());
         for entry in &self.memberships {
+            let sealed = entry
+                .delegation
+                .to_sealed_bytes()
+                .map_err(|_| ResumeError::Invalid)?;
             out.extend_from_slice(&entry.fingerprint);
             out.extend_from_slice(&(entry.scope.len() as u16).to_le_bytes());
             out.extend_from_slice(entry.scope.as_bytes());
-            out.extend_from_slice(entry.secret.as_slice());
+            let length = u32::try_from(sealed.len()).map_err(|_| ResumeError::Invalid)?;
+            out.extend_from_slice(&length.to_le_bytes());
+            out.extend_from_slice(&sealed);
         }
-        out
+        Ok(out)
     }
 
     fn decode(bytes: &[u8]) -> Result<Self, ResumeError> {
@@ -140,31 +173,39 @@ impl ResumeBundle {
         if count > MAX_RESUME_MEMBERSHIPS {
             return Err(ResumeError::Invalid);
         }
-        let mut memberships = Vec::with_capacity(count);
+        let mut bundle = Self::new();
         for _ in 0..count {
             let fingerprint: [u8; 32] = cursor.array()?;
             let len = u16::from_le_bytes(cursor.array()?) as usize;
-            if len == 0 || len > MAX_SCOPE {
-                return Err(ResumeError::Invalid);
-            }
             let scope = std::str::from_utf8(cursor.take(len)?)
                 .map_err(|_| ResumeError::Invalid)?
                 .to_owned();
-            if scope == crate::WALLET_SCOPE {
+            let length = u32::from_le_bytes(cursor.array()?) as usize;
+            let delegation = DeviceDelegation::from_sealed_bytes(cursor.take(length)?)
+                .map_err(|_| ResumeError::Invalid)?;
+            if bundle.delegation(&fingerprint, &scope).is_some() {
                 return Err(ResumeError::Invalid);
             }
-            let secret = Zeroizing::new(cursor.array::<32>()?);
-            memberships.push(Membership {
-                fingerprint,
-                scope,
-                secret,
-            });
+            bundle.insert(fingerprint, &scope, delegation)?;
         }
         if !cursor.0.is_empty() {
             return Err(ResumeError::Invalid);
         }
-        Ok(Self { memberships })
+        Ok(bundle)
     }
+}
+
+/// A resumable community scope: not empty, bounded, never the wallet, and the scope the
+/// delegation was granted in.
+fn checked_scope(scope: &str, delegation: &DeviceDelegation) -> Result<(), ResumeError> {
+    if scope.is_empty()
+        || scope.len() > MAX_SCOPE
+        || scope == crate::WALLET_SCOPE
+        || delegation.community() != scope
+    {
+        return Err(ResumeError::Invalid);
+    }
+    Ok(())
 }
 
 struct Cursor<'a>(&'a [u8]);
@@ -196,76 +237,5 @@ fn aad(binding: &[u8]) -> Vec<u8> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn bundle() -> ResumeBundle {
-        ResumeBundle::mint(vec![
-            (([1; 32], "garden".into()), Zeroizing::new([7; 32])),
-            (([2; 32], "orchard".into()), Zeroizing::new([8; 32])),
-        ])
-    }
-
-    #[test]
-    fn encoding_round_trips_and_refuses_garbage() {
-        let plain = bundle().encode();
-        let back = ResumeBundle::decode(&plain).unwrap();
-        assert_eq!(back.encode().as_slice(), plain.as_slice());
-        assert!(back.community(&[1; 32], "garden").is_ok());
-        assert!(back.community(&[1; 32], "orchard").is_err());
-        assert!(back.community(&[3; 32], "garden").is_err());
-        let mut long = plain.to_vec();
-        long.push(0);
-        assert_eq!(
-            ResumeBundle::decode(&long).err(),
-            Some(ResumeError::Invalid)
-        );
-        assert_eq!(
-            ResumeBundle::decode(&plain[..plain.len() - 1]).err(),
-            Some(ResumeError::Invalid)
-        );
-        assert_eq!(ResumeBundle::decode(&[2]).err(), Some(ResumeError::Invalid));
-        let wallet =
-            ResumeBundle::mint(vec![(([1; 32], "wallet".into()), Zeroizing::new([7; 32]))]);
-        assert_eq!(
-            ResumeBundle::decode(&wallet.encode()).err(),
-            Some(ResumeError::Invalid)
-        );
-    }
-
-    /// Decision M6 at the byte level: the persisted plaintext of a real bundle holds
-    /// every `U_c` and not `W`, and `U_c` differs from `W`.
-    #[test]
-    fn bundle_never_contains_the_wallet_prf_output() {
-        let w = [0x5a; 32];
-        let wallet = crate::WalletUnlock::from_bytes_for_tests(w);
-        let bundle = wallet
-            .resume_bundle(&[([1; 32], "garden"), ([2; 32], "orchard")])
-            .unwrap();
-        let plain = bundle.encode();
-        assert!(!plain.windows(32).any(|window| window == w));
-        for entry in &bundle.memberships {
-            assert_ne!(entry.secret.as_slice(), &w);
-        }
-        let direct = wallet
-            .community(&[1; 32], "garden")
-            .unwrap()
-            .device()
-            .unwrap();
-        let resumed = ResumeBundle::decode(&plain)
-            .unwrap()
-            .community(&[1; 32], "garden")
-            .unwrap()
-            .device()
-            .unwrap();
-        assert_eq!(direct, resumed);
-        assert!(wallet.resume_bundle(&[([1; 32], "wallet")]).is_err());
-        assert!(wallet.resume_bundle(&[([1; 32], "")]).is_err());
-    }
-
-    #[test]
-    fn aad_binds_length_and_binding() {
-        assert_ne!(aad(b"ab"), aad(b"a"));
-        assert!(aad(b"x").starts_with(AAD_PREFIX));
-    }
-}
+#[path = "resume/tests.rs"]
+mod tests;
