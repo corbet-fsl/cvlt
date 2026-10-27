@@ -186,3 +186,346 @@ shared!(
 
 #[cfg(all(feature = "native-records", not(target_arch = "wasm32")))]
 mod native;
+
+// Mutant-killing boundary pins for compound retention (muse-mut126). Each test
+// below fails on at least one listed cargo-mutants survivor while passing on
+// the real code. Tests only; no product change.
+
+/// Offline stub engine: only its authenticated identity is ever consulted by
+/// `CompoundRecords::new`; reads and writes refuse as unavailable.
+#[derive(Clone)]
+struct StubEngine {
+    identity: cdht::runtime::Identity,
+}
+
+impl cdht::runtime::Backend for StubEngine {
+    fn identity(&self) -> cdht::runtime::Identity {
+        self.identity.clone()
+    }
+    async fn get(
+        &self,
+        _subkey: u32,
+        _refresh: bool,
+    ) -> Result<Option<cdht::runtime::Value>, cdht::Error> {
+        Err(cdht::Error::Unavailable)
+    }
+    async fn republish(
+        &self,
+        _subkey: u32,
+        _seq: u32,
+        _data: &[u8],
+    ) -> Result<cdht::runtime::Publication, cdht::Error> {
+        Err(cdht::Error::Unavailable)
+    }
+    async fn flush(&self) -> Result<bool, cdht::Error> {
+        Err(cdht::Error::Unavailable)
+    }
+    async fn watch(&self) -> Result<bool, cdht::Error> {
+        Err(cdht::Error::Unavailable)
+    }
+    async fn cancel_watch(&self) -> Result<bool, cdht::Error> {
+        Err(cdht::Error::Unavailable)
+    }
+    fn changes(&self) -> Result<cdht::runtime::Changes, cdht::Error> {
+        Err(cdht::Error::Unavailable)
+    }
+}
+
+fn stub_record(owner_byte: u8) -> cdht::runtime::Record<StubEngine> {
+    let schema = cdht::Schema::dflt(CHECKPOINT_SUBKEYS).unwrap();
+    let owner = [owner_byte; 32];
+    let key = cdht::RecordKey::derive(&owner, &schema.compile());
+    cdht::runtime::Record::new(StubEngine {
+        identity: cdht::runtime::Identity {
+            key,
+            owner,
+            schema,
+            writer: None,
+        },
+    })
+    .unwrap()
+}
+
+#[test]
+fn owner_record_layout_pins_subkey_arithmetic() {
+    // PARTS is exactly one manifest subkey less than the owner layout: a `+`
+    // or `/` mutant changes how many bytes one record carries and how many
+    // child records the bound allows.
+    assert_eq!(super::PARTS, CHECKPOINT_SUBKEYS as usize - 1);
+    assert_eq!(super::PARTS, 31);
+    assert_eq!(super::RECORD_BYTES, super::PARTS * cdht::MAX_SUBKEY_SIZE);
+    assert_eq!(super::RECORD_BYTES, 31 * 32_768);
+    assert_eq!(MAX_PACKED_CHECKPOINT, 9 * 1024 * 1024);
+    assert_eq!(
+        MAX_CHECKPOINT_RECORDS,
+        MAX_PACKED_CHECKPOINT.div_ceil(super::RECORD_BYTES)
+    );
+    assert_eq!(MAX_CHECKPOINT_RECORDS, 10);
+}
+
+#[test]
+fn debug_impls_redact_instead_of_printing_bytes() {
+    // An `Ok(Default::default())` mutant prints nothing; the redaction must
+    // stay exact so sealed bytes never reach logs.
+    let prepared = PreparedCheckpoint {
+        scope: [3; 32],
+        root: cdht::RecordKey([7; 32]),
+        sequence: 9,
+        packed: Zeroizing::new(vec![0xAA; 64]),
+        manifests: vec![Zeroizing::new(b"manifest-bytes".to_vec())],
+    };
+    assert_eq!(format!("{prepared:?}"), "PreparedCheckpoint([redacted])");
+    let retained = RetainedCheckpoint {
+        scope: [5; 32],
+        sequence: 11,
+        wire: Zeroizing::new(b"sealed-wire-bytes".to_vec()),
+    };
+    assert_eq!(format!("{retained:?}"), "RetainedCheckpoint([redacted])");
+}
+
+#[test]
+fn for_each_part_visits_child_parts_and_manifests_in_order() {
+    // A `>`-to-`<` mutant on the multi flag drops every child address; a
+    // `+`-to-`-` mutant underflows the child manifest index; a `+`-to-`*`
+    // mutant replays the root manifest where a child manifest belongs.
+    let sequence = 7;
+    let root_manifest = b"mut126-root-manifest".to_vec();
+    let child_zero = b"mut126-child-zero".to_vec();
+    let child_one = b"mut126-child-one".to_vec();
+    let mut packed = Vec::with_capacity(super::RECORD_BYTES + 5);
+    for i in 0..super::RECORD_BYTES + 5 {
+        packed.push((i % 251) as u8);
+    }
+    let prepared = PreparedCheckpoint {
+        scope: [1; 32],
+        root: cdht::RecordKey([7; 32]),
+        sequence,
+        packed: Zeroizing::new(packed.clone()),
+        manifests: vec![
+            Zeroizing::new(root_manifest.clone()),
+            Zeroizing::new(child_zero.clone()),
+            Zeroizing::new(child_one.clone()),
+        ],
+    };
+    let mut seen: Vec<(Option<usize>, u32, u32, Vec<u8>)> = Vec::new();
+    prepared
+        .for_each_part(|child, subkey, seq, bytes| {
+            seen.push((child, subkey, seq, bytes.to_vec()));
+            Ok(())
+        })
+        .unwrap();
+    let mut expected = Vec::new();
+    for (part, bytes) in packed[..super::RECORD_BYTES]
+        .chunks(cdht::MAX_SUBKEY_SIZE)
+        .enumerate()
+    {
+        expected.push((Some(0), (part + 1) as u32, sequence, bytes.to_vec()));
+    }
+    expected.push((Some(0), 0, sequence, child_zero.clone()));
+    expected.push((Some(1), 1, sequence, packed[super::RECORD_BYTES..].to_vec()));
+    expected.push((Some(1), 0, sequence, child_one.clone()));
+    expected.push((None, 0, sequence, root_manifest.clone()));
+    assert_eq!(expected.len(), 31 + 4);
+    assert_eq!(seen, expected);
+    // A single-chunk checkpoint addresses the root record only.
+    let small_bytes = vec![0x11; 100];
+    let small = PreparedCheckpoint {
+        scope: [1; 32],
+        root: cdht::RecordKey([7; 32]),
+        sequence,
+        packed: Zeroizing::new(small_bytes.clone()),
+        manifests: vec![Zeroizing::new(root_manifest.clone())],
+    };
+    let mut small_seen: Vec<(Option<usize>, u32, u32, Vec<u8>)> = Vec::new();
+    small
+        .for_each_part(|child, subkey, seq, bytes| {
+            small_seen.push((child, subkey, seq, bytes.to_vec()));
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        small_seen,
+        vec![
+            (None, 1, sequence, small_bytes),
+            (None, 0, sequence, root_manifest),
+        ]
+    );
+}
+
+#[test]
+fn restore_keys_rejects_wrong_expected_digest() {
+    // A `true` match guard would restore into any digest: the wrong digest
+    // must refuse while the exact retained digest restores.
+    futures_executor::block_on(async {
+        let scope = "mut126-keys-guard";
+        let prf = ckmg::passkey::PrfOutput::from_bytes(&[9; 32]).unwrap();
+        let cipher = ckmg::passkey::store_cipher(&prf, scope).unwrap();
+        let locator = ckmg::passkey::vault_location(&prf, scope).unwrap();
+        let sealed = b"mut126 sealed owner bytes";
+        let mut source = cwst::Store::create(cwst::backend::Memory::new(), &cipher, scope)
+            .await
+            .unwrap();
+        source
+            .commit(
+                0,
+                [7; 32],
+                &[cwst::Change::Put {
+                    owner: "keys",
+                    key: locator.as_bytes(),
+                    value: sealed,
+                }],
+                &[],
+            )
+            .await
+            .unwrap();
+        let wire = source.sealed_checkpoint().unwrap().to_vec();
+        let version = source.version().unwrap();
+        let scope_hash = scope_digest(scope).unwrap();
+        let expected = digest(sealed);
+        let retained = RetainedCheckpoint {
+            scope: scope_hash,
+            sequence: version as u32,
+            wire: Zeroizing::new(wire.clone()),
+        };
+        assert!(
+            retained
+                .restore_keys(
+                    cwst::backend::Memory::new(),
+                    &cipher,
+                    scope,
+                    locator,
+                    &expected
+                )
+                .await
+                .is_ok()
+        );
+        let wrong = [0x5A; 32];
+        assert_ne!(wrong, expected);
+        let retained = RetainedCheckpoint {
+            scope: scope_hash,
+            sequence: version as u32,
+            wire: Zeroizing::new(wire),
+        };
+        assert!(
+            retained
+                .restore_keys(
+                    cwst::backend::Memory::new(),
+                    &cipher,
+                    scope,
+                    locator,
+                    &wrong
+                )
+                .await
+                .is_err()
+        );
+    });
+}
+
+#[test]
+fn prepare_rejects_either_scope_mismatch() {
+    // An `||`-to-`&&` mutant prepares when only one side matches: each single
+    // mismatch must refuse while the full match succeeds.
+    futures_executor::block_on(async {
+        let scope_a = "mut126-scope-a";
+        let scope_b = "mut126-scope-b";
+        let cipher_a = ckmg::passkey::store_cipher(
+            &ckmg::passkey::PrfOutput::from_bytes(&[11; 32]).unwrap(),
+            scope_a,
+        )
+        .unwrap();
+        let cipher_b = ckmg::passkey::store_cipher(
+            &ckmg::passkey::PrfOutput::from_bytes(&[12; 32]).unwrap(),
+            scope_b,
+        )
+        .unwrap();
+        let store_a = cwst::Store::create(cwst::backend::Memory::new(), &cipher_a, scope_a)
+            .await
+            .unwrap();
+        let store_b = cwst::Store::create(cwst::backend::Memory::new(), &cipher_b, scope_b)
+            .await
+            .unwrap();
+        let records_a = CompoundRecords::new(scope_a, stub_record(21), vec![]).unwrap();
+        assert!(records_a.prepare(&store_a, scope_a).is_ok());
+        assert!(records_a.prepare(&store_b, scope_a).is_err());
+        assert!(records_a.prepare(&store_b, scope_b).is_err());
+    });
+}
+
+#[test]
+fn prepare_bounds_child_records_by_needed_chunks() {
+    // A `>`-to-`==` mutant refuses the exact fit; a `>`-to-`<` mutant refuses
+    // every surplus. Too few children must refuse while the exact fit and a
+    // surplus prepare fine.
+    futures_executor::block_on(async {
+        let scope = "mut126-multi-chunk";
+        let prf = ckmg::passkey::PrfOutput::from_bytes(&[13; 32]).unwrap();
+        let cipher = ckmg::passkey::store_cipher(&prf, scope).unwrap();
+        let mut store = cwst::Store::create(cwst::backend::Memory::new(), &cipher, scope)
+            .await
+            .unwrap();
+        let first = random(400_000);
+        let second = random(400_000);
+        let third = random(400_000);
+        store
+            .commit(
+                0,
+                [7; 32],
+                &[
+                    cwst::Change::Put {
+                        owner: "fixture-first",
+                        key: b"state",
+                        value: &first,
+                    },
+                    cwst::Change::Put {
+                        owner: "fixture-second",
+                        key: b"state",
+                        value: &second,
+                    },
+                    cwst::Change::Put {
+                        owner: "fixture-third",
+                        key: b"state",
+                        value: &third,
+                    },
+                ],
+                &[],
+            )
+            .await
+            .unwrap();
+        let abundant = CompoundRecords::new(
+            scope,
+            stub_record(31),
+            (0u8..MAX_CHECKPOINT_RECORDS as u8)
+                .map(|i| stub_record(40 + i))
+                .collect(),
+        )
+        .unwrap();
+        let prepared = abundant.prepare(&store, scope).unwrap();
+        let needed = prepared.manifests.len() - 1;
+        assert!(needed >= 2, "fixture must span records, got {needed}");
+        assert!(needed + 1 <= MAX_CHECKPOINT_RECORDS);
+        let short = CompoundRecords::new(
+            scope,
+            stub_record(32),
+            (0..needed as u8 - 1).map(|i| stub_record(50 + i)).collect(),
+        )
+        .unwrap();
+        assert!(matches!(
+            short.prepare(&store, scope),
+            Err(CheckpointError::Limit)
+        ));
+        let exact = CompoundRecords::new(
+            scope,
+            stub_record(33),
+            (0..needed as u8).map(|i| stub_record(60 + i)).collect(),
+        )
+        .unwrap();
+        assert!(exact.prepare(&store, scope).is_ok());
+        let extra = CompoundRecords::new(
+            scope,
+            stub_record(34),
+            (0..needed as u8 + 1).map(|i| stub_record(70 + i)).collect(),
+        )
+        .unwrap();
+        assert!(extra.prepare(&store, scope).is_ok());
+    });
+}
