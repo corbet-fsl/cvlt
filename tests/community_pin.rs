@@ -81,7 +81,7 @@ type TestVault = Vault<Memory, Clock, ckmg::SystemEntropy, TestOnlyAuthority, No
 
 // Real PRF/Keys/Memory store, mirroring the unit harness in
 // `tests/unit/wallet_restore.rs` but without the `wallet` feature.
-async fn base() -> TestVault {
+async fn base_on(backend: Memory) -> TestVault {
     let prf = PrfOutput::from_bytes(&[7; 32]).unwrap();
     let device = ckmg::passkey::device_public_key(&prf, SCOPE).unwrap();
     let authority = TestOnlyAuthority {
@@ -91,9 +91,7 @@ async fn base() -> TestVault {
         deny_use: Rc::new(Cell::new(false)),
     };
     let cipher = store_cipher(&prf, SCOPE).unwrap();
-    let store = cwst::Store::create(Memory::new(), &cipher, SCOPE)
-        .await
-        .unwrap();
+    let store = cwst::Store::create(backend, &cipher, SCOPE).await.unwrap();
     let mut vault = Vault::new(
         store,
         SCOPE,
@@ -134,6 +132,10 @@ async fn base() -> TestVault {
     vault.keys().acknowledge(receipt.operation).await.unwrap();
     drop(guard);
     vault
+}
+
+async fn base() -> TestVault {
+    base_on(Memory::new()).await
 }
 
 fn run<F: std::future::Future>(future: F) -> F::Output {
@@ -535,5 +537,45 @@ fn pin_replay_with_a_credential_change_still_commits() {
             Ok(false)
         );
         assert_eq!(vault.storage().lock().await.version().unwrap(), before);
+    });
+}
+
+// Kills 202:17 (deleted `cwst::Error::Conflict` arm in write_community_pin):
+// a commit that loses the backend compare-and-swap to a concurrent writer
+// over the same backend must surface as Conflict (retryable), never Storage.
+#[test]
+fn pin_concurrent_backend_write_maps_to_conflict() {
+    run(async {
+        let backend = Memory::new();
+        let mut vault = base_on(backend.clone()).await;
+        let first = pin(1, None);
+        assert_eq!(
+            vault.write_community_pin(None, &first, None).await,
+            Ok(true)
+        );
+        // A concurrent writer over the same backend advances the checkpoint
+        // outside this vault's Store snapshot, so the fenced commit loses its
+        // compare-and-swap.
+        let wire = vault
+            .storage()
+            .lock()
+            .await
+            .sealed_checkpoint()
+            .unwrap()
+            .to_vec();
+        let mut rival_wire = wire.clone();
+        let last = rival_wire.len() - 1;
+        rival_wire[last] ^= 1;
+        backend
+            .compare_exchange(Some(&wire), &rival_wire)
+            .await
+            .unwrap();
+        // The pin itself is untouched and still the expected one, so only the
+        // fenced commit can refuse, and only with Conflict.
+        let next = pin(1, Some((2, 5)));
+        assert_eq!(
+            vault.write_community_pin(Some(&first), &next, None).await,
+            Err(CredentialError::Conflict)
+        );
     });
 }
