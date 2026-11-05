@@ -86,6 +86,16 @@ impl PreparedOpen {
         passkey::sign_device_session(&self.prf, &self.scope, payload).map_err(OpenError::Keys)
     }
 
+    /// The wallet device key K for silent wallet session renewal (A13): only K's seed, which
+    /// signs only the wallet session renewal and the wallet login's proof of possession. The
+    /// wallet opening alone yields it; a community opening refuses.
+    pub fn wallet_session_key(&self) -> Result<passkey::WalletSessionKey, OpenError> {
+        if self.scope != crate::WALLET_SCOPE {
+            return Err(OpenError::Composition(Error::Scope));
+        }
+        passkey::WalletSessionKey::new(&self.prf).map_err(OpenError::Keys)
+    }
+
     /// The wallet device key's birth signature over `payload` in one birth format
     /// (`WalletBirthDevice` or `WalletBirthPassport`; ckmg prepends the tag and refuses every
     /// other format and every scope but the wallet's). A registration restarted after

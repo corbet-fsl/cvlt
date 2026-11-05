@@ -239,3 +239,28 @@ shared!(
         assert!(reopen(previous, backend).await == Some(lineage));
     }
 );
+
+shared!(only_the_wallet_opening_yields_the_wallet_session_key, {
+    let mut client = passkeys().await;
+    let wallet = WalletUnlock::new(unlock(&mut client).await);
+    let opening = wallet.wallet().unwrap();
+    // A13: K for the silent wallet renewal is the wallet opening's own device key.
+    let key = opening.wallet_session_key().unwrap();
+    assert_eq!(key.public_key(), opening.device().unwrap());
+    let payload = b"payload";
+    let message = [ckmg::DeviceFormat::WalletSession.tag(), payload.as_slice()].concat();
+    ckmg::verify_ed25519(
+        opening.device().unwrap().value(),
+        &message,
+        &key.sign(payload).unwrap(),
+    )
+    .unwrap();
+    // A community opening has no wallet key.
+    assert!(
+        wallet
+            .community(&COMMUNITIES[0].1, COMMUNITIES[0].0)
+            .unwrap()
+            .wallet_session_key()
+            .is_err()
+    );
+});
