@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 description = "Vault facade: the member side's trust core for identity, keys, credentials, proofs and storage"
 license = "FSL-1.1-ALv2"
-repository = "https://git.corbet.ch/corbet-libs/cvlt.git"
+repository = "https://git.corbet.ch/corbet-fsl/cvlt.git"
 readme = "README.md"
 publish = false
 include = ["Cargo.toml", "src/**", "browser/**", "README.md", "LICENSE.md", "docs/**"]
@@ -25,15 +25,15 @@ native-records = ["ckmg/native-records", "dep:cmsh"]
 os-keyring = ["dep:keyring"]
 
 [dependencies]
-cwlt = { git = "https://git.corbet.ch/corbet-foss/cwlt", branch = "main", default-features = false, features = ["passport", "record", "account"], optional = true }
-cchr = { git = "https://git.corbet.ch/corbet-foss/cchr.git", branch = "main" }
-cpsd = { git = "https://git.corbet.ch/corbet-foss/cpsd", branch = "main", default-features = false }
-ckyh = { git = "https://git.corbet.ch/corbet-foss/ckyh", branch = "main", default-features = false }
-cprz = { git = "https://git.corbet.ch/corbet-foss/cprz.git", branch = "main", default-features = false }
-cprz-pad = { git = "https://git.corbet.ch/corbet-foss/cprz.git", branch = "main" }
-cdht = { git = "https://git.corbet.ch/corbet-foss/cdht.git", branch = "main" }
-cpky = { git = "https://git.corbet.ch/corbet-foss/cpky.git", branch = "main" }
-ckmg = { git = "https://git.corbet.ch/corbet-foss/ckmg.git", branch = "main" }
+cwlt = { git = "https://git.corbet.ch/corbet-foss/cwlt.git", branch = "main", default-features = false, features = ["passport", "record", "account"], optional = true }
+cchr = { git = "https://git.corbet.ch/corbet-libre/cchr.git", branch = "main" }
+cpsd = { git = "https://git.corbet.ch/corbet-libre/cpsd.git", branch = "main", default-features = false }
+ckyh = { git = "https://git.corbet.ch/corbet-libre/ckyh.git", branch = "main", default-features = false }
+cprz = { git = "https://git.corbet.ch/corbet-libre/cprz.git", branch = "main", default-features = false }
+cprz-pad = { git = "https://git.corbet.ch/corbet-libre/cprz.git", branch = "main" }
+cdht = { git = "https://git.corbet.ch/corbet-libre/cdht.git", branch = "main" }
+cpky = { git = "https://git.corbet.ch/corbet-libre/cpky.git", branch = "main" }
+ckmg = { git = "https://git.corbet.ch/corbet-libre/ckmg.git", branch = "main" }
 cwst = { git = "https://git.corbet.ch/corbet-foss/cwst.git", branch = "main" }
 futures = "0.3"
 serde_json = "1"
@@ -43,7 +43,7 @@ sha2 = { version = "0.11", default-features = false }
 zeroize = { version = "1", features = ["derive"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-cmsh = { git = "https://git.corbet.ch/corbet-libs/cmsh.git", branch = "main", features = ["veilid"], optional = true }
+cmsh = { git = "https://git.corbet.ch/corbet-fsl/cmsh.git", branch = "main", features = ["veilid"], optional = true }
 aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
 getrandom = "0.3"
 
@@ -67,16 +67,16 @@ wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-ckyh = { git = "https://git.corbet.ch/corbet-foss/ckyh", branch = "main", default-features = false, features = ["server"] }
-crlt = { git = "https://git.corbet.ch/corbet-foss/crlt", branch = "main" }
+ckyh = { git = "https://git.corbet.ch/corbet-libre/ckyh.git", branch = "main", default-features = false, features = ["server"] }
+crlt = { git = "https://git.corbet.ch/corbet-libre/crlt.git", branch = "main" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tempfile = "3"
 
 [dev-dependencies]
-czkp = { git = "https://git.corbet.ch/corbet-foss/czkp", branch = "main", features = ["reference"] }
+czkp = { git = "https://git.corbet.ch/corbet-foss/czkp.git", branch = "main", features = ["reference"] }
 ed25519-dalek = { version = "3.0.0", features = ["digest"] }
-csgn = { git = "https://git.corbet.ch/corbet-foss/csgn", branch = "main", default-features = false, features = ["volatile-signer"] }
-cpky = { git = "https://git.corbet.ch/corbet-foss/cpky.git", branch = "main", features = ["test-authenticator"] }
+csgn = { git = "https://git.corbet.ch/corbet-libre/csgn.git", branch = "main", default-features = false, features = ["volatile-signer"] }
+cpky = { git = "https://git.corbet.ch/corbet-libre/cpky.git", branch = "main", features = ["test-authenticator"] }
 base64 = "0.22"
 futures-executor = "0.3"
 wasm-bindgen-test = "0.3.79"
