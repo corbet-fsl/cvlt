@@ -21,6 +21,8 @@ mod account_genesis_tests;
 mod account_restore_tests;
 #[path = "credential.rs"]
 mod credential_tests;
+#[path = "delegation_outbox.rs"]
+mod delegation_outbox_tests;
 #[path = "update_outbox.rs"]
 mod update_outbox_tests;
 #[path = "voucher_custody.rs"]

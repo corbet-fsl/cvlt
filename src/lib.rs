@@ -4,6 +4,7 @@
 mod community_pin;
 mod compound;
 mod credential;
+mod delegation_outbox;
 mod existing;
 mod index_record;
 mod initial;
@@ -27,6 +28,7 @@ pub use compound::{
 };
 pub use credential::{CredentialError, CredentialWrite, MAX_COMMUNITY_CREDENTIAL_BYTES};
 use cwst::backend::Backend;
+pub use delegation_outbox::MAX_DELEGATION_OUTBOX_BYTES;
 pub use existing::{OpenError, Owners, PreparedOpen, PreparedRecovery, RecoveryCandidate};
 pub use index_record::TorIndexRecord;
 pub use initial::{
