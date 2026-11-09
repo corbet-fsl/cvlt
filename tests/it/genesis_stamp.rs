@@ -5,13 +5,14 @@
 use ckmg::{Action, Authority, Authorization, Binding, DeviceInfo, Error, PublicKey};
 use cpsd::{
     ActionKind, CommunityId, IssuanceChallenge, KeyId, OpaqueHolder, StampAction, StampIssuerKey,
-    StampParams, StampPresentation, StampScope, rand::rngs::OsRng,
+    StampParams, StampPresentation, StampScope,
 };
 use csgn::{Kind, SecretKey, Signer};
 use cvlt::{
     EvidenceError, GenesisError, LineageError, LineageEvidence, StampKeyPeriod, StampTrust,
     lineage_genesis_action, lineage_stamp_scope,
 };
+use rand::rngs::OsRng;
 use serde_json::{Value, json};
 use std::{cell::Cell, rc::Rc};
 

@@ -194,7 +194,7 @@ shared!(
         // The stamp twin never accepts passkey evidence, whatever stamp trust it is given.
         let stamp_params = cpsd::StampParams::new(86_400).unwrap();
         let stamp_key = cpsd::StampIssuerKey::generate(
-            &mut cpsd::rand::rngs::OsRng,
+            &mut rand::rngs::OsRng,
             cpsd::KeyId::new("stamp-1").unwrap(),
             &stamp_params,
         )

@@ -71,6 +71,10 @@ ckyh = { git = "https://git.corbet.ch/corbet-libre/ckyh.git", branch = "main", d
 crlt = { git = "https://git.corbet.ch/corbet-libre/crlt.git", branch = "main" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tempfile = "3"
+# The native stamp tests drive cpsd's RNG-bound APIs; cpsd re-exports `ark_std::rand` (rand
+# 0.8), whose `OsRng` is gated on the `getrandom` feature. Name the same major here so the
+# tests do not depend on another dev-dependency (passkey-authenticator) enabling it.
+rand = { version = "0.8", features = ["std_rng", "getrandom"] }
 
 [dev-dependencies]
 czkp = { git = "https://git.corbet.ch/corbet-foss/czkp.git", branch = "main", features = ["reference"] }

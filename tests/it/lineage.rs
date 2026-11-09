@@ -549,7 +549,7 @@ fn public_evidence_roundtrip_uses_original_challenge_and_deterministic_keys_hash
     // stamp digest.
     let params = cpsd::StampParams::new(86_400).unwrap();
     let stamp_key = cpsd::StampIssuerKey::generate(
-        &mut cpsd::rand::rngs::OsRng,
+        &mut rand::rngs::OsRng,
         cpsd::KeyId::new("stamp").unwrap(),
         &params,
     )

@@ -10,12 +10,13 @@ use ckmg::{
 };
 use cpsd::{
     CommunityId, IssuanceChallenge, KeyId, OpaqueHolder, StampAction, StampIssuerKey, StampParams,
-    StampPresentation, StampScope, rand::rngs::OsRng,
+    StampPresentation, StampScope,
 };
 use csgn::{Kind, SecretKey, Signer};
 use cvlt::{
     EvidenceError, LineageError, LineageEvidence, StampKeyPeriod, StampTrust, lineage_stamp_scope,
 };
+use rand::rngs::OsRng;
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 

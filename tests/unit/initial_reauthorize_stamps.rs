@@ -3,11 +3,9 @@
 //! the opaque holder and a real wallet stamp key, against a signed Charter at NOW.
 use super::*;
 use ckmg::{Action, Authority, Authorization, Binding, DeviceInfo, Error, PublicKey};
-use cpsd::{
-    CommunityId, IssuanceChallenge, KeyId, OpaqueHolder, StampIssuerKey, StampParams,
-    rand::rngs::OsRng,
-};
+use cpsd::{CommunityId, IssuanceChallenge, KeyId, OpaqueHolder, StampIssuerKey, StampParams};
 use csgn::{Kind, SecretKey, Signer};
+use rand::rngs::OsRng;
 use serde_json::{Value, json};
 use std::{cell::Cell, rc::Rc};
 
