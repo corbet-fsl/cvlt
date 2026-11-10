@@ -73,7 +73,7 @@ class LockTests(unittest.TestCase):
     def test_original_sibling_and_exact_shared_engine_source(self):
         url = 'https://git.corbet.ch/corbet-foss/cprz.git'
         self.assertEqual(validate(name='cprz-pad', url=url), 0)
-        url = 'https://git.corbet.ch/corbet-foss/cwlt'
+        url = 'https://git.corbet.ch/corbet-libre/cwlt'
         extra = f'[[package]]\nname="cwlt-engine"\nversion="0.0.0"\nsource="git+{url}?branch=main#{SHA}"\n'
         self.assertEqual(validate(name='cwlt', url=url, selector='branch="main"',
                                   source=f'git+{url}?branch=main#{SHA}', extra=extra), 0)
