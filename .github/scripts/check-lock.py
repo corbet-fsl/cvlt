@@ -4,23 +4,28 @@ import re
 import tomllib
 from urllib.parse import parse_qs, urlsplit
 
-CANONICAL = re.compile(r'^https://git\.corbet\.ch/(corbet-(?:foss|libs))/([a-z][a-z0-9-]*)(\.git)?$')
+CANONICAL = re.compile(r'^https://git\.corbet\.ch/(corbet-(?:libre|fsl))/([a-z][a-z0-9-]*)(\.git)?$')
 SHA = re.compile(r'^[0-9a-f]{40}$')
+# The v01 original-owner exceptions ended with the 2026-11 org move: every
+# first-party pin is branch = main at its new owner. The `.git` suffix is
+# historical spelling and carries no meaning; both forms are canonical.
 ORIGINAL = {
-    'corbet-foss': frozenset({'cchr', 'cdht', 'ckmg', 'cpky', 'cprz', 'cvln', 'cwst'}),
-    'corbet-libs': frozenset({'cmsh'}),
+    'corbet-libre': frozenset(),
+    'corbet-fsl': frozenset(),
 }
 SHARED = {
-    'corbet-foss': frozenset({'cbcn', 'cfbk', 'cgrd', 'ckyh', 'cpns', 'cpsd', 'crbk',
-                              'crlt', 'csgn', 'cshm', 'cwlt', 'czkp'}),
-    'corbet-libs': frozenset(),
+    'corbet-libre': frozenset({'cbcn', 'cblv', 'cchr', 'cdht', 'cfbk', 'cgrd',
+                               'ckmg', 'ckyh', 'cpky', 'cpns', 'cprz', 'cpsd',
+                               'crbk', 'crlt', 'csgn', 'cshm', 'cvch', 'cvln',
+                               'cwlt', 'cwst', 'czkp'}),
+    'corbet-fsl': frozenset({'cmsh'}),
 }
 SIBLINGS = {'cprz-blob': 'cprz', 'cprz-pad': 'cprz', 'cwlt-engine': 'cwlt'}
 PACKAGES = frozenset().union(*ORIGINAL.values(), *SHARED.values(), SIBLINGS)
 
 
 def first_party(source):
-    return any(owner in source for owner in ('corbet-foss/', 'corbet-libs/', 'cmtymeet/'))
+    return any(owner in source for owner in ('corbet-libre/', 'corbet-fsl/', 'cmtymeet/'))
 
 
 def owner_branch(repo, package):
@@ -30,12 +35,9 @@ def owner_branch(repo, package):
     group, slug, suffix = matched.groups()
     if not isinstance(package, str) or SIBLINGS.get(package, package) != slug:
         raise ValueError(f'Package {package} differs from its repository owner')
-    original = slug in ORIGINAL[group]
-    if not original and slug not in SHARED[group]:
+    if slug not in ORIGINAL[group] and slug not in SHARED[group]:
         raise ValueError(f'Unknown first-party owner: {group}/{slug}')
-    if bool(suffix) != original:
-        raise ValueError(f'Incorrect canonical owner URL for {package}')
-    return 'v01' if original else 'main'
+    return 'main'
 
 
 def check_manifest(value, alias=None):

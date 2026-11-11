@@ -25,7 +25,7 @@ native-records = ["ckmg/native-records", "dep:cmsh"]
 os-keyring = ["dep:keyring"]
 
 [dependencies]
-cwlt = { git = "https://git.corbet.ch/corbet-foss/cwlt.git", branch = "main", default-features = false, features = ["passport", "record", "account"], optional = true }
+cwlt = { git = "https://git.corbet.ch/corbet-libre/cwlt.git", branch = "main", default-features = false, features = ["passport", "record", "account"], optional = true }
 cchr = { git = "https://git.corbet.ch/corbet-libre/cchr.git", branch = "main" }
 cpsd = { git = "https://git.corbet.ch/corbet-libre/cpsd.git", branch = "main", default-features = false }
 ckyh = { git = "https://git.corbet.ch/corbet-libre/ckyh.git", branch = "main", default-features = false }
@@ -34,7 +34,7 @@ cprz-pad = { git = "https://git.corbet.ch/corbet-libre/cprz.git", branch = "main
 cdht = { git = "https://git.corbet.ch/corbet-libre/cdht.git", branch = "main" }
 cpky = { git = "https://git.corbet.ch/corbet-libre/cpky.git", branch = "main" }
 ckmg = { git = "https://git.corbet.ch/corbet-libre/ckmg.git", branch = "main" }
-cwst = { git = "https://git.corbet.ch/corbet-foss/cwst.git", branch = "main" }
+cwst = { git = "https://git.corbet.ch/corbet-libre/cwst.git", branch = "main" }
 futures = "0.3"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
@@ -77,7 +77,7 @@ tempfile = "3"
 rand = { version = "0.8", features = ["std_rng", "getrandom"] }
 
 [dev-dependencies]
-czkp = { git = "https://git.corbet.ch/corbet-foss/czkp.git", branch = "main", features = ["reference"] }
+czkp = { git = "https://git.corbet.ch/corbet-libre/czkp.git", branch = "main", features = ["reference"] }
 ed25519-dalek = { version = "3.0.0", features = ["digest"] }
 csgn = { git = "https://git.corbet.ch/corbet-libre/csgn.git", branch = "main", default-features = false, features = ["volatile-signer"] }
 cpky = { git = "https://git.corbet.ch/corbet-libre/cpky.git", branch = "main", features = ["test-authenticator"] }
