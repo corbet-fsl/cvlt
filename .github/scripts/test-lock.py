@@ -25,7 +25,7 @@ def validate(selector='branch = "main"', source=None, duplicate=False,
 
 
 class LockTests(unittest.TestCase):
-    def test_exact_main_revision(self):
+    def test_exact_original_revision(self):
         self.assertEqual(validate(), 0)
 
     def test_exact_shared_revision(self):
@@ -35,15 +35,15 @@ class LockTests(unittest.TestCase):
 
     def test_direct_pin_or_other_branch(self):
         for selector in ['rev="' + SHA + '"', 'tag="v1"', 'branch="preview"',
-                         'branch="v01"', 'branch="v01", rev="' + SHA + '"',
-                         'branch="v01", tag="v1"', 'branch="v01", path="."']:
+                         'branch="v01"', 'branch="main", rev="' + SHA + '"',
+                         'branch="main", tag="v1"', 'branch="main", path="."']:
             with self.subTest(selector=selector):
                 self.assertNotEqual(validate(selector=selector), 0)
 
     def test_transitive_revision_tag_and_other_branch(self):
         for selector in ['rev=' + SHA, 'tag=v1', 'branch=preview', 'branch=v01',
-                         'branch=v01&rev=' + SHA, 'branch=v01&tag=v01',
-                         'branch=v01&branch=v01', 'branch=v01&other=value']:
+                         'branch=main&rev=' + SHA, 'branch=main&tag=v1',
+                         'branch=main&branch=main', 'branch=main&other=value']:
             with self.subTest(selector=selector):
                 self.assertNotEqual(validate(source=f'git+{URL}?{selector}#{SHA}'), 0)
 
@@ -65,16 +65,15 @@ class LockTests(unittest.TestCase):
     def test_short_resolved_revision(self):
         self.assertNotEqual(validate(source=f'git+{URL}?branch=main#short'), 0)
 
-    def test_shared_rejects_v01_with_or_without_suffix(self):
+    def test_shared_cannot_select_original_branch_or_suffix(self):
         for url in ['https://git.corbet.ch/corbet-libre/csgn',
                     'https://git.corbet.ch/corbet-libre/csgn.git']:
             self.assertNotEqual(validate(name='csgn', url=url, selector='branch="v01"',
-                                          source=f'git+{url}?branch=v01#{SHA}'), 0)
+                                         source=f'git+{url}?branch=v01#{SHA}'), 0)
 
-    def test_sibling_and_exact_shared_engine_source(self):
+    def test_original_sibling_and_exact_shared_engine_source(self):
         url = 'https://git.corbet.ch/corbet-libre/cprz.git'
-        self.assertEqual(validate(name='cprz-pad', url=url, selector='branch="main"',
-                                  source=f'git+{url}?branch=main#{SHA}'), 0)
+        self.assertEqual(validate(name='cprz-pad', url=url), 0)
         url = 'https://git.corbet.ch/corbet-libre/cwlt'
         extra = f'[[package]]\nname="cwlt-engine"\nversion="0.0.0"\nsource="git+{url}?branch=main#{SHA}"\n'
         self.assertEqual(validate(name='cwlt', url=url, selector='branch="main"',

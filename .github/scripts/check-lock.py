@@ -6,19 +6,14 @@ from urllib.parse import parse_qs, urlsplit
 
 CANONICAL = re.compile(r'^https://git\.corbet\.ch/(corbet-(?:libre|fsl))/([a-z][a-z0-9-]*)(\.git)?$')
 SHA = re.compile(r'^[0-9a-f]{40}$')
-# The v01 original-owner exceptions ended with the 2026-11 org move: every
-# first-party pin is branch = main at its new owner. The `.git` suffix is
-# historical spelling and carries no meaning; both forms are canonical.
 ORIGINAL = {
-    'corbet-libre': frozenset(),
-    'corbet-fsl': frozenset(),
+    'corbet-libre': frozenset({'cchr', 'cdht', 'ckmg', 'cpky', 'cprz', 'cvln', 'cwst'}),
+    'corbet-fsl': frozenset({'cmsh'}),
 }
 SHARED = {
-    'corbet-libre': frozenset({'cbcn', 'cblv', 'cchr', 'cdht', 'cfbk', 'cgrd',
-                               'ckmg', 'ckyh', 'cpky', 'cpns', 'cprz', 'cpsd',
-                               'crbk', 'crlt', 'csgn', 'cshm', 'cvch', 'cvln',
-                               'cwlt', 'cwst', 'czkp'}),
-    'corbet-fsl': frozenset({'cmsh'}),
+    'corbet-libre': frozenset({'cbcn', 'cfbk', 'cgrd', 'ckyh', 'cpns', 'cpsd', 'crbk',
+                              'crlt', 'csgn', 'cshm', 'cwlt', 'czkp', 'cblv', 'cvch'}),
+    'corbet-fsl': frozenset(),
 }
 SIBLINGS = {'cprz-blob': 'cprz', 'cprz-pad': 'cprz', 'cwlt-engine': 'cwlt'}
 PACKAGES = frozenset().union(*ORIGINAL.values(), *SHARED.values(), SIBLINGS)
@@ -37,6 +32,8 @@ def owner_branch(repo, package):
         raise ValueError(f'Package {package} differs from its repository owner')
     if slug not in ORIGINAL[group] and slug not in SHARED[group]:
         raise ValueError(f'Unknown first-party owner: {group}/{slug}')
+    if suffix not in (None, '.git'):
+        raise ValueError(f'Incorrect canonical owner URL for {package}')
     return 'main'
 
 
