@@ -13,6 +13,7 @@ use std::{cell::Cell, rc::Rc};
 const SCOPE: &str = "wallet-test";
 const MEMBER: &str = "fixture-member";
 const NOW: u64 = 1_800_000_000;
+const ROTATION_EVIDENCE: &[u8] = b"fixture-rotate";
 
 #[path = "account_genesis.rs"]
 mod account_genesis_tests;
@@ -49,11 +50,19 @@ struct TestOnlyAuthority {
 }
 impl Authority for TestOnlyAuthority {
     async fn check(&mut self, request: Authorization<'_>) -> Result<(), Error> {
-        if request.binding != &self.binding
-            || request.now != NOW
-            || request.target.is_some()
-            || request.signing.is_some()
+        if request.binding != &self.binding || request.now != NOW || request.signing.is_some() {
+            return Err(Error::Unauthorized);
+        }
+        // K1 S4 restore tests only: this device enrols one delegate and rotates it out,
+        // which moves the scope to the next epoch root.
+        if matches!(request.action, Action::DelegateDevice | Action::Rotate)
+            && request.evidence == ROTATION_EVIDENCE
+            && request.target.is_some()
+            && Some(request.device) == self.device
         {
+            return Ok(());
+        }
+        if request.target.is_some() {
             return Err(Error::Unauthorized);
         }
         match request.action {
@@ -89,6 +98,17 @@ async fn base() -> (TestVault, Rc<Cell<bool>>) {
     base_for(SCOPE, MEMBER, false).await
 }
 async fn base_for(scope: &str, member: &str, global: bool) -> (TestVault, Rc<Cell<bool>>) {
+    base_with(scope, member, global, ckmg::SystemEntropy).await
+}
+async fn base_with<E: ckmg::Entropy>(
+    scope: &str,
+    member: &str,
+    global: bool,
+    entropy: E,
+) -> (
+    Vault<Memory, Clock, E, TestOnlyAuthority, NoRecords, ()>,
+    Rc<Cell<bool>>,
+) {
     use ckmg::passkey::PrfOutput;
     let prf = PrfOutput::from_bytes(&[7; 32]).unwrap();
     let device = ckmg::passkey::device_public_key(&prf, scope).unwrap();
@@ -103,16 +123,7 @@ async fn base_for(scope: &str, member: &str, global: bool) -> (TestVault, Rc<Cel
     let store = cwst::Store::create(Memory::new(), &cipher, scope)
         .await
         .unwrap();
-    let mut vault = Vault::new(
-        store,
-        scope,
-        Clock,
-        ckmg::SystemEntropy,
-        authority,
-        NoRecords,
-        (),
-    )
-    .unwrap();
+    let mut vault = Vault::new(store, scope, Clock, entropy, authority, NoRecords, ()).unwrap();
     let guard = vault
         .stage_keys(Batch {
             expected: 0,
@@ -161,8 +172,8 @@ async fn base_for(scope: &str, member: &str, global: bool) -> (TestVault, Rc<Cel
 }
 // Both original sealed owners via original Durable constructors; pseudonym is the
 // original CPSD value, never a hardcoded fabricated identity.
-async fn seed_both<B: Backend>(
-    vault: &mut Vault<B, Clock, ckmg::SystemEntropy, TestOnlyAuthority, NoRecords, ()>,
+async fn seed_both<B: Backend, E: ckmg::Entropy>(
+    vault: &mut Vault<B, Clock, E, TestOnlyAuthority, NoRecords, ()>,
 ) -> Pseudonym {
     let community = CommunityId::new(SCOPE.as_bytes()).unwrap();
     let mut holder = vault
@@ -479,4 +490,202 @@ async fn global_restore_refuses_absence_foreign_scope_and_wrong_holder() {
         vault.restore_global_passport().await,
         Err(WalletRestoreError::Passport(_))
     ));
+}
+
+// K1 S4 (review B1): the PRODUCT restore path must reach the class R opening keys.
+// A holder sealed under the pre-S4 identity key, or under an earlier epoch root,
+// must restore with its pseudonym, and survive saves: each save reopens the stored
+// ciphertext, and the first one reseals it under the current epoch's key.
+const GLOBAL_MEMBER: &str = "fda91f17-ccbd-4f83-93f8-3beaf10dbd2b";
+const HOLDER_OWNER: &str = "cwlt.passport";
+const HOLDER_KEY: &[u8] = b"holder.v1";
+
+/// Test-only deterministic Entropy: a byte counter. With it, `create_scope` draws the
+/// same stable identity in a pre-S4 build (identity = epoch-1 root, one draw) and
+/// in this build (identity first, then the independent epoch-1 root), so a holder
+/// a pre-S4 build sealed for that identity belongs to this Vault's identity.
+struct FixtureEntropy(u8);
+impl ckmg::Entropy for FixtureEntropy {
+    fn fill(&mut self, output: &mut [u8]) -> Result<(), Error> {
+        for byte in output {
+            *byte = self.0;
+            self.0 = self.0.wrapping_add(1);
+        }
+        Ok(())
+    }
+}
+
+/// Put exact holder ciphertext as the committed passport owner record.
+async fn put_holder<E: ckmg::Entropy>(
+    vault: &Vault<Memory, Clock, E, TestOnlyAuthority, NoRecords, ()>,
+    sealed: &[u8],
+) {
+    let mut store = vault.storage().lock().await;
+    let base = store.version().unwrap();
+    store
+        .commit_with_receipt(
+            base,
+            [91; 32],
+            &[cwst::Change::Put {
+                owner: HOLDER_OWNER,
+                key: HOLDER_KEY,
+                value: sealed,
+            }],
+            &[],
+        )
+        .await
+        .unwrap();
+}
+
+async fn staged<B: Backend, E: ckmg::Entropy, W, T>(
+    vault: &mut Vault<B, Clock, E, TestOnlyAuthority, NoRecords, W>,
+    operation: u8,
+    change: impl AsyncFnOnce(&mut Vault<B, Clock, E, TestOnlyAuthority, NoRecords, W>) -> T,
+) -> T {
+    let expected = vault.storage().lock().await.version().unwrap();
+    let guard = vault
+        .stage_keys(Batch {
+            expected,
+            operation: [operation; 32],
+            mutations: vec![],
+            outputs: vec![],
+        })
+        .unwrap();
+    let output = change(vault).await;
+    drop(guard);
+    output
+}
+
+/// The device enrols one delegate and rotates it out: the scope moves to epoch 2,
+/// and this device is a survivor whose holder was sealed under the epoch-1 root.
+async fn rotate_out_a_delegate<E: ckmg::Entropy>(
+    vault: &mut Vault<Memory, Clock, E, TestOnlyAuthority, NoRecords, ()>,
+) {
+    let (receipt, _) = staged(vault, 81, async |v| {
+        v.keys()
+            .delegate_device(&[], ROTATION_EVIDENCE)
+            .await
+            .unwrap()
+    })
+    .await;
+    staged(vault, 82, async |v| {
+        v.keys().acknowledge(receipt.operation).await.unwrap()
+    })
+    .await;
+    let delegate = vault.keys().lineage().await.unwrap().delegates[0];
+    vault
+        .keys()
+        .prepare_rotation(delegate, ROTATION_EVIDENCE)
+        .await
+        .unwrap();
+    let receipt = staged(vault, 83, async |v| {
+        v.keys().commit().await.unwrap().unwrap()
+    })
+    .await;
+    staged(vault, 84, async |v| {
+        v.keys().acknowledge(receipt.operation).await.unwrap()
+    })
+    .await;
+    assert_eq!(vault.keys().lineage().await.unwrap().epoch, 2);
+}
+
+/// The pseudonym of the holder Keys initializes now (no stored state involved).
+async fn fresh_pseudonym<E: ckmg::Entropy>(
+    vault: &mut Vault<Memory, Clock, E, TestOnlyAuthority, NoRecords, ()>,
+    community: &[u8],
+) -> String {
+    let community = CommunityId::new(community).unwrap();
+    vault
+        .keys()
+        .with_holder_seed(cwlt::PassportHolder::from_holder_seed)
+        .await
+        .unwrap()
+        .unwrap()
+        .with_session(|s| s.pseudonym(&community))
+        .to_hex()
+}
+
+/// Restore, read the pseudonym, save twice (cancel commits the holder), read again.
+async fn restores_and_saves_community<E: ckmg::Entropy>(
+    vault: Vault<Memory, Clock, E, TestOnlyAuthority, NoRecords, ()>,
+    expected: &str,
+) {
+    let community = CommunityId::new(SCOPE.as_bytes()).unwrap();
+    let mut vault = vault.restore_wallet_custody().await.unwrap();
+    for save in [25, 26] {
+        let pseudonym = vault
+            .with_wallet_custody(|passport, _, store| {
+                passport.session(store).unwrap().pseudonym(&community)
+            })
+            .await
+            .unwrap();
+        assert_eq!(pseudonym.to_hex(), expected);
+        vault
+            .cancel_passport_issuance([save; 32], &mut StdRng::seed_from_u64(save.into()))
+            .await
+            .unwrap();
+    }
+}
+
+async fn restores_and_saves_global<E: ckmg::Entropy>(
+    vault: Vault<Memory, Clock, E, TestOnlyAuthority, NoRecords, ()>,
+    expected: &str,
+) {
+    let community = CommunityId::new(b"alpha").unwrap();
+    let mut vault = vault.restore_global_passport().await.unwrap();
+    for save in [27, 28] {
+        let pseudonym = vault
+            .with_global_passport(|holder| holder.pseudonym(&community))
+            .await
+            .unwrap();
+        assert_eq!(pseudonym.to_hex(), expected);
+        vault
+            .cancel_global_passport_issuance([save; 32], &mut StdRng::seed_from_u64(save.into()))
+            .await
+            .unwrap();
+    }
+}
+
+// The fixtures are the exact holder owner records (`cwlt.passport`/`holder.v1`) a
+// pre-S4 build wrote (cvlt 7b2cdb9 over ckmg cf4a1fb, generated in lane s4fixgen by
+// `base_with(.., FixtureEntropy(1))` + `seed_both` for the community and
+// `base_with("wallet", GLOBAL_MEMBER, true, FixtureEntropy(1))` for the global
+// holder); the `.pseudonym` files hold the pseudonyms that build computed.
+#[tokio::test]
+async fn a_community_holder_a_pre_s4_build_sealed_under_the_identity_key_restores() {
+    let (mut vault, _) = base_with(SCOPE, MEMBER, false, FixtureEntropy(1)).await;
+    let expected = include_str!("fixtures/pre-s4-community.pseudonym");
+    // Same identity as the pre-S4 build, so the fixture is this member's own holder.
+    assert_eq!(
+        fresh_pseudonym(&mut vault, SCOPE.as_bytes()).await,
+        expected
+    );
+    seed_both(&mut vault).await;
+    put_holder(&vault, include_bytes!("fixtures/pre-s4-community.holder")).await;
+    restores_and_saves_community(vault, expected).await;
+}
+
+#[tokio::test]
+async fn a_global_holder_a_pre_s4_build_sealed_under_the_identity_key_restores() {
+    let (mut vault, _) = base_with("wallet", GLOBAL_MEMBER, true, FixtureEntropy(1)).await;
+    let expected = include_str!("fixtures/pre-s4-global.pseudonym");
+    assert_eq!(fresh_pseudonym(&mut vault, b"alpha").await, expected);
+    put_holder(&vault, include_bytes!("fixtures/pre-s4-global.holder")).await;
+    restores_and_saves_global(vault, expected).await;
+}
+
+#[tokio::test]
+async fn a_community_holder_sealed_before_a_rotation_restores_on_the_surviving_device() {
+    let (mut vault, _) = base().await;
+    let before = seed_both(&mut vault).await.to_hex();
+    rotate_out_a_delegate(&mut vault).await;
+    restores_and_saves_community(vault, &before).await;
+}
+
+#[tokio::test]
+async fn a_global_holder_sealed_before_a_rotation_restores_on_the_surviving_device() {
+    let (mut vault, _) = base_for("wallet", GLOBAL_MEMBER, true).await;
+    let before = fresh_pseudonym(&mut vault, b"alpha").await;
+    rotate_out_a_delegate(&mut vault).await;
+    restores_and_saves_global(vault, &before).await;
 }
