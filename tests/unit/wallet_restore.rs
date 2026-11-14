@@ -560,8 +560,8 @@ async fn staged<B: Backend, E: ckmg::Entropy, W, T>(
 
 /// The device enrols one delegate and rotates it out: the scope moves to epoch 2,
 /// and this device is a survivor whose holder was sealed under the epoch-1 root.
-async fn rotate_out_a_delegate<E: ckmg::Entropy>(
-    vault: &mut Vault<Memory, Clock, E, TestOnlyAuthority, NoRecords, ()>,
+async fn rotate_out_a_delegate<E: ckmg::Entropy, W>(
+    vault: &mut Vault<Memory, Clock, E, TestOnlyAuthority, NoRecords, W>,
 ) {
     let (receipt, _) = staged(vault, 81, async |v| {
         v.keys()
@@ -690,4 +690,83 @@ async fn a_global_holder_sealed_before_a_rotation_restores_on_the_surviving_devi
     let before = fresh_pseudonym(&mut vault, b"alpha").await;
     rotate_out_a_delegate(&mut vault).await;
     restores_and_saves_global(vault, &before).await;
+}
+
+// K1 S4 (review-s4b N1): a custody restored before a rotation holds the passport holder
+// and the record engine bound to the pre-rotation epoch key, which the removed device
+// still holds. Every save from it after the rotation is refused (`Rotated`), so the
+// caller restores again and the next save seals under the current epoch's key.
+fn record_epoch_descriptor() -> cwlt::record::Epoch {
+    cwlt::record::Epoch {
+        purpose: czkp::record::Purpose::RecordEpochV3,
+        community: [1; 32],
+        policy_epoch: 1,
+        epoch: 18_000_000,
+        starts_at: NOW - 10,
+        expires_at: NOW + 90,
+        root: [3; 32],
+        issuer_key: [4; 32],
+        proof_scope: czkp::ProofScope {
+            circuit_digest: [5; 32],
+            verifying_key_digest: [6; 32],
+        },
+        leaf_count: 2,
+        download_digest: [7; 32],
+        download_bytes: 64,
+    }
+}
+
+#[tokio::test]
+async fn a_community_custody_restored_before_a_rotation_refuses_every_save_after_it() {
+    let (mut vault, _) = base().await;
+    let before = seed_both(&mut vault).await.to_hex();
+    let mut custody = vault.restore_wallet_custody().await.unwrap();
+    // Saves before the rotation go through.
+    custody
+        .cancel_passport_issuance([31; 32], &mut StdRng::seed_from_u64(31))
+        .await
+        .unwrap();
+    rotate_out_a_delegate(&mut custody).await;
+    let version = custody.storage().lock().await.version().unwrap();
+    assert!(matches!(
+        custody
+            .cancel_passport_issuance([32; 32], &mut StdRng::seed_from_u64(32))
+            .await,
+        Err(WalletRestoreError::Rotated)
+    ));
+    assert!(matches!(
+        custody
+            .begin_record_epoch(&record_epoch_descriptor(), [8; 32], NOW, [33; 32])
+            .await,
+        Err(WalletRestoreError::Rotated)
+    ));
+    // Nothing was written; reads still work.
+    assert_eq!(custody.storage().lock().await.version().unwrap(), version);
+    let community = CommunityId::new(SCOPE.as_bytes()).unwrap();
+    let pseudonym = custody
+        .with_wallet_custody(|passport, _, store| {
+            passport.session(store).unwrap().pseudonym(&community)
+        })
+        .await
+        .unwrap();
+    assert_eq!(pseudonym.to_hex(), before);
+}
+
+#[tokio::test]
+async fn a_global_custody_restored_before_a_rotation_refuses_every_save_after_it() {
+    let (vault, _) = base_for("wallet", GLOBAL_MEMBER, true).await;
+    let mut custody = vault.restore_global_passport().await.unwrap();
+    custody
+        .cancel_global_passport_issuance([34; 32], &mut StdRng::seed_from_u64(34))
+        .await
+        .unwrap();
+    rotate_out_a_delegate(&mut custody).await;
+    let version = custody.storage().lock().await.version().unwrap();
+    assert!(matches!(
+        custody
+            .cancel_global_passport_issuance([35; 32], &mut StdRng::seed_from_u64(35))
+            .await,
+        Err(WalletRestoreError::Rotated)
+    ));
+    assert_eq!(custody.storage().lock().await.version().unwrap(), version);
 }

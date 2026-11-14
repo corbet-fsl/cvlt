@@ -34,13 +34,20 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
     pub async fn restore_account_only_custody(
         self,
     ) -> Result<Vault<B, C, E, A, R, WalletCustody>, WalletRestoreError> {
+        let mut vault = self.restore_community_account().await?;
+        let epoch = vault
+            .keys
+            .lineage()
+            .await
+            .map_err(WalletRestoreError::Keys)?
+            .epoch;
         let Vault {
             keys,
             storage,
             key_store,
             records,
             wallet,
-        } = self.restore_community_account().await?;
+        } = vault;
         Ok(Vault {
             keys,
             storage,
@@ -50,6 +57,7 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
                 passport: None,
                 record: None,
                 account: Some(wallet.account),
+                epoch,
             },
         })
     }

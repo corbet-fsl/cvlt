@@ -13,15 +13,23 @@ use cwlt::record::{Context, DurableRecord, Epoch, Presentation, Record};
 pub trait RecordSlot {
     /// The record owner slot, or `None` when this wallet type keeps no records.
     fn record_slot(&mut self) -> Option<&mut Option<DurableRecord>>;
+    /// The lineage epoch the custody was restored under, `None` without records.
+    fn restored_epoch(&self) -> Option<u64>;
 }
 impl RecordSlot for () {
     fn record_slot(&mut self) -> Option<&mut Option<DurableRecord>> {
+        None
+    }
+    fn restored_epoch(&self) -> Option<u64> {
         None
     }
 }
 impl RecordSlot for WalletCustody {
     fn record_slot(&mut self) -> Option<&mut Option<DurableRecord>> {
         Some(&mut self.record)
+    }
+    fn restored_epoch(&self) -> Option<u64> {
+        Some(self.epoch)
     }
 }
 
@@ -41,6 +49,7 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W: RecordSlot>
         let storage = self.storage.clone();
         let mut store = storage.lock().await;
         let community = self.record_scope(&store).await?;
+        self.unrotated().await?;
         if self
             .wallet
             .record_slot()
@@ -91,6 +100,7 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W: RecordSlot>
         let storage = self.storage.clone();
         let mut store = storage.lock().await;
         let community = self.record_scope(&store).await?;
+        self.unrotated().await?;
         self.wallet
             .record_slot()
             .and_then(Option::as_mut)
@@ -156,6 +166,22 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W: RecordSlot>
             return Err(WalletRestoreError::Scope);
         }
         Ok(binding.community().to_owned())
+    }
+
+    /// Saves only: the record engine seals under the epoch key it was restored with,
+    /// so a custody restored before a rotation refuses until it is restored again.
+    async fn unrotated(&mut self) -> Result<(), WalletRestoreError> {
+        let current = self
+            .keys
+            .lineage()
+            .await
+            .map_err(WalletRestoreError::Keys)?
+            .epoch;
+        match self.wallet.restored_epoch() {
+            Some(epoch) if epoch == current => Ok(()),
+            Some(_) => Err(WalletRestoreError::Rotated),
+            None => Err(WalletRestoreError::Scope),
+        }
     }
 
     async fn same_record_scope(&mut self, community: &str) -> Result<(), WalletRestoreError> {

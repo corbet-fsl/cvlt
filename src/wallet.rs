@@ -19,6 +19,9 @@ pub struct WalletCustody {
     /// The community account capsule, when this community has one. Present so the
     /// one Vault of a device owns the Store for the account actor too.
     pub(crate) account: Option<cwlt::account_owner::DurableAccountOwner>,
+    /// The lineage epoch this custody was restored under: its holder and record engine
+    /// seal under that epoch's key, so saves refuse once the lineage moved on.
+    pub(crate) epoch: u64,
 }
 
 /// Wallet custody refuses missing owner records and failed authentication.
@@ -35,6 +38,10 @@ pub enum WalletRestoreError {
     Account(cwlt::account_owner::Error),
     /// Vault scope or checkpoint changed during construction.
     Scope,
+    /// The member's lineage rotated after this custody was restored. Its holder and
+    /// record engine still seal under the pre-rotation epoch key, which a removed device
+    /// holds, so saves refuse: restore the custody again (K1 S4, review-s4b N1).
+    Rotated,
 }
 impl std::fmt::Display for WalletRestoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -52,12 +59,12 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
     ) -> Result<Vault<B, C, E, A, R, WalletCustody>, WalletRestoreError> {
         let storage = self.storage.clone();
         let store = storage.lock().await;
-        let binding = self
+        let lineage = self
             .keys
             .lineage()
             .await
-            .map_err(WalletRestoreError::Keys)?
-            .binding;
+            .map_err(WalletRestoreError::Keys)?;
+        let (binding, epoch) = (lineage.binding, lineage.epoch);
         if !store.is_scope(binding.community()) {
             return Err(WalletRestoreError::Scope);
         }
@@ -106,6 +113,7 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
                 passport: Some(passport),
                 record: Some(record),
                 account,
+                epoch,
             },
         })
     }
@@ -122,6 +130,9 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
             .map_err(WalletRestoreError::Keys)?;
         if !store.is_scope(lineage.binding.community()) {
             return Err(WalletRestoreError::Scope);
+        }
+        if lineage.epoch != self.wallet.epoch {
+            return Err(WalletRestoreError::Rotated);
         }
         Ok(())
     }

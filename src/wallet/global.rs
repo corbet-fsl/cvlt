@@ -6,6 +6,8 @@ use super::*;
 /// checkpoint. Initialization belongs to the genuine initial acknowledgment.
 pub struct GlobalPassportCustody {
     passport: cwlt::passport::DurableHolder,
+    /// The lineage epoch the holder was restored under; saves refuse once it moved on.
+    epoch: u64,
 }
 
 impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, A, R, ()> {
@@ -39,7 +41,10 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
             storage: self.storage,
             key_store: self.key_store,
             records: self.records,
-            wallet: GlobalPassportCustody { passport },
+            wallet: GlobalPassportCustody {
+                passport,
+                epoch: lineage.epoch,
+            },
         })
     }
 }
@@ -55,6 +60,9 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
             .map_err(WalletRestoreError::Keys)?;
         if lineage.binding.community() != "wallet" || !store.is_scope("wallet") {
             return Err(WalletRestoreError::Scope);
+        }
+        if lineage.epoch != self.wallet.epoch {
+            return Err(WalletRestoreError::Rotated);
         }
         Ok(())
     }
