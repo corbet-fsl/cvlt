@@ -134,9 +134,9 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
     /// holder and record engine seal under the epoch key they were opened with; after a
     /// rotation `Rotated` refuses their saves, and this reopens them from the Store under
     /// the current epoch's key, so the caller's retry seals under it. Fresh Keys authority
-    /// is required, so a device the rotation removed refuses here too. A custody whose
-    /// epoch did not move is left exactly as it is.
-    pub async fn reopen_after_rotation(&mut self) -> Result<(), WalletRestoreError> {
+    /// is required, so a device the rotation removed refuses here too. `Ok(true)` means the
+    /// owners were reopened; `Ok(false)` that the epoch did not move and nothing changed.
+    pub async fn reopen_after_rotation(&mut self) -> Result<bool, WalletRestoreError> {
         let epoch = self
             .keys
             .lineage()
@@ -144,14 +144,17 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
             .map_err(WalletRestoreError::Keys)?
             .epoch;
         if epoch == self.wallet.epoch {
-            return Ok(());
+            return Ok(false);
         }
-        self.wallet = if self.wallet.passport.is_none() && self.wallet.record.is_none() {
-            self.open_account_only_owners().await?
+        // The member's community Vault is account-only (no passport, ever); the record
+        // owner is there once the record job's first begin filled its slot.
+        self.wallet = if self.wallet.passport.is_none() {
+            let record = self.wallet.record.is_some();
+            self.open_account_only_owners(record).await?
         } else {
             self.open_wallet_owners().await?
         };
-        Ok(())
+        Ok(true)
     }
 
     async fn authorize_wallet_store(&mut self, store: &Store<B>) -> Result<(), WalletRestoreError> {

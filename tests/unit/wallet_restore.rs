@@ -786,7 +786,7 @@ async fn a_community_custody_reopens_after_a_rotation_and_saves_under_the_new_ep
             .await,
         Err(WalletRestoreError::Rotated)
     ));
-    custody.reopen_after_rotation().await.unwrap();
+    assert!(custody.reopen_after_rotation().await.unwrap());
     custody
         .cancel_passport_issuance([37; 32], &mut StdRng::seed_from_u64(37))
         .await
@@ -817,7 +817,7 @@ async fn a_global_custody_reopens_after_a_rotation_and_saves_under_the_new_epoch
         custody.with_global_passport(|_| ()).await,
         Err(WalletRestoreError::Rotated)
     ));
-    custody.reopen_after_rotation().await.unwrap();
+    assert!(custody.reopen_after_rotation().await.unwrap());
     custody.with_global_passport(|_| ()).await.unwrap();
     custody
         .cancel_global_passport_issuance([39; 32], &mut StdRng::seed_from_u64(39))
@@ -831,12 +831,12 @@ async fn reopening_a_custody_that_did_not_rotate_changes_nothing() {
     seed_both(&mut vault).await;
     let mut custody = vault.restore_wallet_custody().await.unwrap();
     let version = custody.storage().lock().await.version().unwrap();
-    custody.reopen_after_rotation().await.unwrap();
+    assert!(!custody.reopen_after_rotation().await.unwrap());
     assert_eq!(custody.storage().lock().await.version().unwrap(), version);
     let (vault, _) = base_for("wallet", GLOBAL_MEMBER, true).await;
     let mut global = vault.restore_global_passport().await.unwrap();
     let version = global.storage().lock().await.version().unwrap();
-    global.reopen_after_rotation().await.unwrap();
+    assert!(!global.reopen_after_rotation().await.unwrap());
     assert_eq!(global.storage().lock().await.version().unwrap(), version);
 }
 
@@ -859,4 +859,60 @@ async fn a_device_without_current_authority_cannot_reopen_a_custody() {
         global.reopen_after_rotation().await,
         Err(WalletRestoreError::Keys(_))
     ));
+}
+
+// R1 (opus-review-custody): the member's community Vault is the ACCOUNT-ONLY custody (no
+// passport; the record job fills the record slot at its first begin). Its reopen must
+// open the account capsule and, once filled, the record owner, never a passport.
+async fn account_only_custody()
+-> Vault<Memory, Clock, ckmg::SystemEntropy, TestOnlyAuthority, NoRecords, super::WalletCustody> {
+    let (mut vault, _) = base().await;
+    let storage = vault.storage().clone();
+    let engine = vault.keys().wallet_engine().await.unwrap();
+    {
+        let mut store = storage.lock().await;
+        let mut pending =
+            cwlt::account_owner::DurableAccountOwner::prepare(engine, &store, SCOPE, [85; 32])
+                .unwrap();
+        pending.commit(&mut store).await.unwrap();
+    }
+    vault.restore_account_only_custody().await.unwrap()
+}
+
+#[tokio::test]
+async fn an_account_only_custody_reopens_after_a_rotation_keeping_its_record_owner() {
+    let mut custody = account_only_custody().await;
+    // The first begin fills the record slot (the fixture epoch itself is not provable).
+    let _ = custody
+        .begin_record_epoch(&record_epoch_descriptor(), [8; 32], NOW, [86; 32])
+        .await;
+    assert!(custody.wallet.record.is_some());
+    rotate_out_a_delegate(&mut custody).await;
+    assert!(matches!(
+        custody
+            .begin_record_epoch(&record_epoch_descriptor(), [8; 32], NOW, [87; 32])
+            .await,
+        Err(WalletRestoreError::Rotated)
+    ));
+    assert!(custody.reopen_after_rotation().await.unwrap());
+    assert!(custody.wallet.passport.is_none());
+    assert!(custody.wallet.record.is_some());
+    assert!(custody.wallet.account.is_some());
+    // Past the epoch guard again, and finish finds its record owner (not `Scope`).
+    assert!(!matches!(
+        custody
+            .begin_record_epoch(&record_epoch_descriptor(), [8; 32], NOW, [88; 32])
+            .await,
+        Err(WalletRestoreError::Rotated)
+    ));
+    assert!(!matches!(custody.reopen_after_rotation().await, Ok(true)));
+}
+
+#[tokio::test]
+async fn an_account_only_custody_without_a_record_owner_reopens_without_creating_one() {
+    let mut custody = account_only_custody().await;
+    rotate_out_a_delegate(&mut custody).await;
+    assert!(custody.reopen_after_rotation().await.unwrap());
+    assert!(custody.wallet.record.is_none());
+    assert!(custody.wallet.account.is_some());
 }

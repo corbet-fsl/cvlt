@@ -63,17 +63,18 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
     /// Reopen the holder in place after the member's lineage rotated (L20261116a); see
     /// `Vault::<.., WalletCustody>::reopen_after_rotation`. A custody whose epoch did not
     /// move is left exactly as it is.
-    pub async fn reopen_after_rotation(&mut self) -> Result<(), WalletRestoreError> {
+    pub async fn reopen_after_rotation(&mut self) -> Result<bool, WalletRestoreError> {
         let epoch = self
             .keys
             .lineage()
             .await
             .map_err(WalletRestoreError::Keys)?
             .epoch;
-        if epoch != self.wallet.epoch {
-            self.wallet = self.open_global_owner().await?;
+        if epoch == self.wallet.epoch {
+            return Ok(false);
         }
-        Ok(())
+        self.wallet = self.open_global_owner().await?;
+        Ok(true)
     }
 
     async fn authorize_global_store(&mut self, store: &Store<B>) -> Result<(), WalletRestoreError> {

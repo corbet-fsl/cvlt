@@ -34,7 +34,7 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
     pub async fn restore_account_only_custody(
         mut self,
     ) -> Result<Vault<B, C, E, A, R, WalletCustody>, WalletRestoreError> {
-        let wallet = self.open_account_only_owners().await?;
+        let wallet = self.open_account_only_owners(false).await?;
         Ok(Vault {
             keys: self.keys,
             storage: self.storage,
@@ -62,20 +62,39 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
 }
 
 impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W> Vault<B, C, E, A, R, W> {
-    /// The account-only wallet custody, opened under the current lineage epoch.
+    /// The account-only wallet custody, opened under the current lineage epoch. The epoch is
+    /// read BEFORE any owner is opened, so a rotation in between can only make the custody
+    /// look older than its keys (one more `Rotated`), never newer. `with_record` also opens
+    /// the existing record owner (never creates one).
     pub(super) async fn open_account_only_owners(
         &mut self,
+        with_record: bool,
     ) -> Result<WalletCustody, WalletRestoreError> {
-        let account = self.open_account_owner().await?;
-        let epoch = self
+        let lineage = self
             .keys
             .lineage()
             .await
-            .map_err(WalletRestoreError::Keys)?
-            .epoch;
+            .map_err(WalletRestoreError::Keys)?;
+        let (community, epoch) = (lineage.binding.community().to_owned(), lineage.epoch);
+        let account = self.open_account_owner().await?;
+        let record = if with_record {
+            let engine = self
+                .keys
+                .wallet_engine()
+                .await
+                .map_err(WalletRestoreError::Keys)?;
+            let storage = self.storage.clone();
+            let store = storage.lock().await;
+            Some(
+                cwlt::record::DurableRecord::open(engine, &store, &community)
+                    .map_err(WalletRestoreError::Record)?,
+            )
+        } else {
+            None
+        };
         Ok(WalletCustody {
             passport: None,
-            record: None,
+            record,
             account: Some(account),
             epoch,
         })
