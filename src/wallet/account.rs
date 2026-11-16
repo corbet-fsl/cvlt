@@ -32,33 +32,15 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
     /// custody type, holding only the account capsule (no passport or record owner,
     /// which a community Store enrolled through the account path does not have).
     pub async fn restore_account_only_custody(
-        self,
+        mut self,
     ) -> Result<Vault<B, C, E, A, R, WalletCustody>, WalletRestoreError> {
-        let mut vault = self.restore_community_account().await?;
-        let epoch = vault
-            .keys
-            .lineage()
-            .await
-            .map_err(WalletRestoreError::Keys)?
-            .epoch;
-        let Vault {
-            keys,
-            storage,
-            key_store,
-            records,
-            wallet,
-        } = vault;
+        let wallet = self.open_account_only_owners().await?;
         Ok(Vault {
-            keys,
-            storage,
-            key_store,
-            records,
-            wallet: WalletCustody {
-                passport: None,
-                record: None,
-                account: Some(wallet.account),
-                epoch,
-            },
+            keys: self.keys,
+            storage: self.storage,
+            key_store: self.key_store,
+            records: self.records,
+            wallet,
         })
     }
 
@@ -68,6 +50,40 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
     pub async fn restore_community_account(
         mut self,
     ) -> Result<Vault<B, C, E, A, R, CommunityAccountCustody>, WalletRestoreError> {
+        let account = self.open_account_owner().await?;
+        Ok(Vault {
+            keys: self.keys,
+            storage: self.storage,
+            key_store: self.key_store,
+            records: self.records,
+            wallet: CommunityAccountCustody { account },
+        })
+    }
+}
+
+impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W> Vault<B, C, E, A, R, W> {
+    /// The account-only wallet custody, opened under the current lineage epoch.
+    pub(super) async fn open_account_only_owners(
+        &mut self,
+    ) -> Result<WalletCustody, WalletRestoreError> {
+        let account = self.open_account_owner().await?;
+        let epoch = self
+            .keys
+            .lineage()
+            .await
+            .map_err(WalletRestoreError::Keys)?
+            .epoch;
+        Ok(WalletCustody {
+            passport: None,
+            record: None,
+            account: Some(account),
+            epoch,
+        })
+    }
+
+    async fn open_account_owner(
+        &mut self,
+    ) -> Result<cwlt::account_owner::DurableAccountOwner, WalletRestoreError> {
         let storage = self.storage.clone();
         let store = storage.lock().await;
         let binding = self
@@ -100,13 +116,7 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
             return Err(WalletRestoreError::Scope);
         }
         drop(store);
-        Ok(Vault {
-            keys: self.keys,
-            storage: self.storage,
-            key_store: self.key_store,
-            records: self.records,
-            wallet: CommunityAccountCustody { account },
-        })
+        Ok(account)
     }
 }
 

@@ -17,6 +17,20 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
     pub async fn restore_global_passport(
         mut self,
     ) -> Result<Vault<B, C, E, A, R, GlobalPassportCustody>, WalletRestoreError> {
+        let wallet = self.open_global_owner().await?;
+        Ok(Vault {
+            keys: self.keys,
+            storage: self.storage,
+            key_store: self.key_store,
+            records: self.records,
+            wallet,
+        })
+    }
+}
+
+impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W> Vault<B, C, E, A, R, W> {
+    /// The global holder, opened from the Store under the current lineage epoch and key.
+    async fn open_global_owner(&mut self) -> Result<GlobalPassportCustody, WalletRestoreError> {
         let storage = self.storage.clone();
         let store = storage.lock().await;
         let lineage = self
@@ -36,15 +50,9 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
         let passport = cwlt::passport::DurableHolder::open(holder, &store, "wallet")
             .map_err(WalletRestoreError::Passport)?;
         drop(store);
-        Ok(Vault {
-            keys: self.keys,
-            storage: self.storage,
-            key_store: self.key_store,
-            records: self.records,
-            wallet: GlobalPassportCustody {
-                passport,
-                epoch: lineage.epoch,
-            },
+        Ok(GlobalPassportCustody {
+            passport,
+            epoch: lineage.epoch,
         })
     }
 }
@@ -52,6 +60,22 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
 impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
     Vault<B, C, E, A, R, GlobalPassportCustody>
 {
+    /// Reopen the holder in place after the member's lineage rotated (L20261116a); see
+    /// `Vault::<.., WalletCustody>::reopen_after_rotation`. A custody whose epoch did not
+    /// move is left exactly as it is.
+    pub async fn reopen_after_rotation(&mut self) -> Result<(), WalletRestoreError> {
+        let epoch = self
+            .keys
+            .lineage()
+            .await
+            .map_err(WalletRestoreError::Keys)?
+            .epoch;
+        if epoch != self.wallet.epoch {
+            self.wallet = self.open_global_owner().await?;
+        }
+        Ok(())
+    }
+
     async fn authorize_global_store(&mut self, store: &Store<B>) -> Result<(), WalletRestoreError> {
         let lineage = self
             .keys

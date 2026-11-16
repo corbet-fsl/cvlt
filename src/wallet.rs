@@ -57,6 +57,20 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
     pub async fn restore_wallet_custody(
         mut self,
     ) -> Result<Vault<B, C, E, A, R, WalletCustody>, WalletRestoreError> {
+        let wallet = self.open_wallet_owners().await?;
+        Ok(Vault {
+            keys: self.keys,
+            storage: self.storage,
+            key_store: self.key_store,
+            records: self.records,
+            wallet,
+        })
+    }
+}
+
+impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W> Vault<B, C, E, A, R, W> {
+    /// Open both Wallet owners from the Store under the CURRENT lineage epoch and key.
+    async fn open_wallet_owners(&mut self) -> Result<WalletCustody, WalletRestoreError> {
         let storage = self.storage.clone();
         let store = storage.lock().await;
         let lineage = self
@@ -104,17 +118,11 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
             }
         };
         drop(store);
-        Ok(Vault {
-            keys: self.keys,
-            storage: self.storage,
-            key_store: self.key_store,
-            records: self.records,
-            wallet: WalletCustody {
-                passport: Some(passport),
-                record: Some(record),
-                account,
-                epoch,
-            },
+        Ok(WalletCustody {
+            passport: Some(passport),
+            record: Some(record),
+            account,
+            epoch,
         })
     }
 }
@@ -122,6 +130,30 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records> Vault<B, C, E, 
 impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
     Vault<B, C, E, A, R, WalletCustody>
 {
+    /// Reopen the owners in place after the member's lineage rotated (L20261116a). The
+    /// holder and record engine seal under the epoch key they were opened with; after a
+    /// rotation `Rotated` refuses their saves, and this reopens them from the Store under
+    /// the current epoch's key, so the caller's retry seals under it. Fresh Keys authority
+    /// is required, so a device the rotation removed refuses here too. A custody whose
+    /// epoch did not move is left exactly as it is.
+    pub async fn reopen_after_rotation(&mut self) -> Result<(), WalletRestoreError> {
+        let epoch = self
+            .keys
+            .lineage()
+            .await
+            .map_err(WalletRestoreError::Keys)?
+            .epoch;
+        if epoch == self.wallet.epoch {
+            return Ok(());
+        }
+        self.wallet = if self.wallet.passport.is_none() && self.wallet.record.is_none() {
+            self.open_account_only_owners().await?
+        } else {
+            self.open_wallet_owners().await?
+        };
+        Ok(())
+    }
+
     async fn authorize_wallet_store(&mut self, store: &Store<B>) -> Result<(), WalletRestoreError> {
         let lineage = self
             .keys

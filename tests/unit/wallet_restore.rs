@@ -770,3 +770,93 @@ async fn a_global_custody_restored_before_a_rotation_refuses_every_save_after_it
     ));
     assert_eq!(custody.storage().lock().await.version().unwrap(), version);
 }
+
+// L20261116a (owner, 2026-11-16): after a rotation the app reopens the custody itself.
+// `reopen_after_rotation` re-opens the owners in place under the current epoch, so the
+// next save seals under the new key; nothing the removed device holds can reopen.
+#[tokio::test]
+async fn a_community_custody_reopens_after_a_rotation_and_saves_under_the_new_epoch() {
+    let (mut vault, _) = base().await;
+    let before = seed_both(&mut vault).await.to_hex();
+    let mut custody = vault.restore_wallet_custody().await.unwrap();
+    rotate_out_a_delegate(&mut custody).await;
+    assert!(matches!(
+        custody
+            .cancel_passport_issuance([36; 32], &mut StdRng::seed_from_u64(36))
+            .await,
+        Err(WalletRestoreError::Rotated)
+    ));
+    custody.reopen_after_rotation().await.unwrap();
+    custody
+        .cancel_passport_issuance([37; 32], &mut StdRng::seed_from_u64(37))
+        .await
+        .unwrap();
+    // The record save is past the epoch guard (the fixture record itself is not a valid one).
+    assert!(!matches!(
+        custody
+            .begin_record_epoch(&record_epoch_descriptor(), [8; 32], NOW, [38; 32])
+            .await,
+        Err(WalletRestoreError::Rotated)
+    ));
+    let community = CommunityId::new(SCOPE.as_bytes()).unwrap();
+    let pseudonym = custody
+        .with_wallet_custody(|passport, _, store| {
+            passport.session(store).unwrap().pseudonym(&community)
+        })
+        .await
+        .unwrap();
+    assert_eq!(pseudonym.to_hex(), before);
+}
+
+#[tokio::test]
+async fn a_global_custody_reopens_after_a_rotation_and_saves_under_the_new_epoch() {
+    let (vault, _) = base_for("wallet", GLOBAL_MEMBER, true).await;
+    let mut custody = vault.restore_global_passport().await.unwrap();
+    rotate_out_a_delegate(&mut custody).await;
+    assert!(matches!(
+        custody.with_global_passport(|_| ()).await,
+        Err(WalletRestoreError::Rotated)
+    ));
+    custody.reopen_after_rotation().await.unwrap();
+    custody.with_global_passport(|_| ()).await.unwrap();
+    custody
+        .cancel_global_passport_issuance([39; 32], &mut StdRng::seed_from_u64(39))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn reopening_a_custody_that_did_not_rotate_changes_nothing() {
+    let (mut vault, _) = base().await;
+    seed_both(&mut vault).await;
+    let mut custody = vault.restore_wallet_custody().await.unwrap();
+    let version = custody.storage().lock().await.version().unwrap();
+    custody.reopen_after_rotation().await.unwrap();
+    assert_eq!(custody.storage().lock().await.version().unwrap(), version);
+    let (vault, _) = base_for("wallet", GLOBAL_MEMBER, true).await;
+    let mut global = vault.restore_global_passport().await.unwrap();
+    let version = global.storage().lock().await.version().unwrap();
+    global.reopen_after_rotation().await.unwrap();
+    assert_eq!(global.storage().lock().await.version().unwrap(), version);
+}
+
+#[tokio::test]
+async fn a_device_without_current_authority_cannot_reopen_a_custody() {
+    let (mut vault, deny) = base().await;
+    seed_both(&mut vault).await;
+    let mut custody = vault.restore_wallet_custody().await.unwrap();
+    rotate_out_a_delegate(&mut custody).await;
+    deny.set(true);
+    assert!(matches!(
+        custody.reopen_after_rotation().await,
+        Err(WalletRestoreError::Keys(_))
+    ));
+    let (vault, deny) = base_for("wallet", GLOBAL_MEMBER, true).await;
+    let mut global = vault.restore_global_passport().await.unwrap();
+    rotate_out_a_delegate(&mut global).await;
+    deny.set(true);
+    assert!(matches!(
+        global.reopen_after_rotation().await,
+        Err(WalletRestoreError::Keys(_))
+    ));
+}
