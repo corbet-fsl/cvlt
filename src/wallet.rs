@@ -40,7 +40,9 @@ pub enum WalletRestoreError {
     Scope,
     /// The member's lineage rotated after this custody was restored. Its holder and
     /// record engine still seal under the pre-rotation epoch key, which a removed device
-    /// holds, so saves refuse: restore the custody again (K1 S4, review-s4b N1).
+    /// holds, so saves refuse BEFORE any write: reopen the custody and run the save again
+    /// (K1 S4, review-s4b N1). A rotation that lands after a durable commit is never reported
+    /// this way: the committed result is returned (`committed_despite_rotation`).
     Rotated,
 }
 impl std::fmt::Display for WalletRestoreError {
@@ -124,6 +126,56 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records, W> Vault<B, C, 
             account,
             epoch,
         })
+    }
+}
+
+/// The check that follows a durable commit. A `Rotated` seen only now is not a refusal: the write
+/// already happened, under the epoch this custody was opened with, and this device still holds
+/// current authority (a removed one fails with `Keys`, which stays an error). The committed result
+/// is therefore released, and the next operation meets `Rotated` BEFORE any write, which is the
+/// only place a caller may retry after `reopen_after_rotation`. Retrying a post-commit `Rotated`
+/// would run the write twice (L20261116a, review-custody D1).
+#[cfg(test)]
+thread_local! {
+    /// Test-only injection point: when set, the next commit is followed by a lineage that "moved
+    /// on", i.e. the custody's epoch no longer matches Keys' at the post-commit check. It stands
+    /// for a rotation landing between the commit and that check; it is compiled out of builds.
+    pub(crate) static ROTATE_AFTER_COMMIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Applies [`ROTATE_AFTER_COMMIT`] to a custody's epoch (a no-op outside tests).
+#[cfg(test)]
+pub(crate) fn inject_rotation_after_commit(epoch: &mut u64) {
+    if ROTATE_AFTER_COMMIT.replace(false) {
+        *epoch = epoch.wrapping_add(1);
+    }
+}
+
+pub(crate) fn committed_despite_rotation(
+    observed: Result<(), WalletRestoreError>,
+) -> Result<(), WalletRestoreError> {
+    match observed {
+        Err(WalletRestoreError::Rotated) => Ok(()),
+        other => other,
+    }
+}
+
+#[cfg(test)]
+mod committed_check_tests {
+    use super::*;
+
+    #[test]
+    fn only_a_rotation_seen_after_the_commit_is_forgiven() {
+        assert!(committed_despite_rotation(Ok(())).is_ok());
+        assert!(committed_despite_rotation(Err(WalletRestoreError::Rotated)).is_ok());
+        assert!(matches!(
+            committed_despite_rotation(Err(WalletRestoreError::Scope)),
+            Err(WalletRestoreError::Scope)
+        ));
+        assert!(matches!(
+            committed_despite_rotation(Err(WalletRestoreError::Keys(ckmg::Error::Revoked))),
+            Err(WalletRestoreError::Keys(_))
+        ));
     }
 }
 
@@ -214,7 +266,9 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
         // Revocation during persistence suppresses the output. The original
         // committed owner is retained for explicit reconciliation, never rolled
         // back to resurrect an already consumed issuance opening.
-        self.authorize_wallet_store(&store).await?;
+        #[cfg(test)]
+        inject_rotation_after_commit(&mut self.wallet.epoch);
+        committed_despite_rotation(self.authorize_wallet_store(&store).await)?;
         Ok(output)
     }
 

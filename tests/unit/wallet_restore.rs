@@ -898,7 +898,7 @@ async fn an_account_only_custody_reopens_after_a_rotation_keeping_its_record_own
     assert!(custody.wallet.passport.is_none());
     assert!(custody.wallet.record.is_some());
     assert!(custody.wallet.account.is_some());
-    // Past the epoch guard again, and finish finds its record owner (not `Scope`).
+    // Past the epoch guard again: begin reaches the existing record owner (not `Scope`).
     assert!(!matches!(
         custody
             .begin_record_epoch(&record_epoch_descriptor(), [8; 32], NOW, [88; 32])
@@ -915,4 +915,67 @@ async fn an_account_only_custody_without_a_record_owner_reopens_without_creating
     assert!(custody.reopen_after_rotation().await.unwrap());
     assert!(custody.wallet.record.is_none());
     assert!(custody.wallet.account.is_some());
+}
+
+// Review D1: a rotation seen only AFTER a durable commit must not fail or repeat that write. The
+// hook (wallet::ROTATE_AFTER_COMMIT) makes the custody's epoch stale between commit and check.
+#[tokio::test]
+async fn a_rotation_after_a_global_commit_returns_the_committed_result_and_reopens_next() {
+    let (vault, _) = base_for("wallet", GLOBAL_MEMBER, true).await;
+    let mut custody = vault.restore_global_passport().await.unwrap();
+    let v0 = custody.storage().lock().await.version().unwrap();
+    crate::wallet::ROTATE_AFTER_COMMIT.set(true);
+    custody
+        .cancel_global_passport_issuance([36; 32], &mut StdRng::seed_from_u64(36))
+        .await
+        .expect("the committed result is returned, not Rotated");
+    assert!(
+        !crate::wallet::ROTATE_AFTER_COMMIT.get(),
+        "hook consumed once"
+    );
+    let v1 = custody.storage().lock().await.version().unwrap();
+    assert_eq!(v1, v0 + 1, "exactly one write");
+    // The next operation is refused BEFORE any write.
+    assert!(matches!(
+        custody
+            .cancel_global_passport_issuance([37; 32], &mut StdRng::seed_from_u64(37))
+            .await,
+        Err(WalletRestoreError::Rotated)
+    ));
+    assert_eq!(custody.storage().lock().await.version().unwrap(), v1);
+    // It reopens, and then the same operation writes once under the current epoch.
+    assert!(custody.reopen_after_rotation().await.unwrap());
+    custody
+        .cancel_global_passport_issuance([37; 32], &mut StdRng::seed_from_u64(37))
+        .await
+        .unwrap();
+    assert_eq!(custody.storage().lock().await.version().unwrap(), v1 + 1);
+}
+
+#[tokio::test]
+async fn a_rotation_after_a_community_commit_returns_the_committed_result_and_reopens_next() {
+    let (mut vault, _) = base().await;
+    seed_both(&mut vault).await;
+    let mut custody = vault.restore_wallet_custody().await.unwrap();
+    let v0 = custody.storage().lock().await.version().unwrap();
+    crate::wallet::ROTATE_AFTER_COMMIT.set(true);
+    custody
+        .cancel_passport_issuance([38; 32], &mut StdRng::seed_from_u64(38))
+        .await
+        .expect("the committed result is returned, not Rotated");
+    let v1 = custody.storage().lock().await.version().unwrap();
+    assert_eq!(v1, v0 + 1, "exactly one write");
+    assert!(matches!(
+        custody
+            .cancel_passport_issuance([39; 32], &mut StdRng::seed_from_u64(39))
+            .await,
+        Err(WalletRestoreError::Rotated)
+    ));
+    assert_eq!(custody.storage().lock().await.version().unwrap(), v1);
+    assert!(custody.reopen_after_rotation().await.unwrap());
+    custody
+        .cancel_passport_issuance([39; 32], &mut StdRng::seed_from_u64(39))
+        .await
+        .unwrap();
+    assert_eq!(custody.storage().lock().await.version().unwrap(), v1 + 1);
 }

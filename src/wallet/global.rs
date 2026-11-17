@@ -111,8 +111,11 @@ impl<B: Backend, C: Clock, E: Entropy, A: Authority, R: Records>
             .map_err(WalletRestoreError::Passport)?;
         // An uncertain CAS leaves the original owner invalid until reopen. A
         // successful CAS followed by revocation stays durable but releases no
-        // request or issuer response to the caller.
-        self.authorize_global_store(&store).await?;
+        // request or issuer response to the caller. A mere rotation is not a revocation:
+        // the commit's result is released and the next operation reopens.
+        #[cfg(test)]
+        super::inject_rotation_after_commit(&mut self.wallet.epoch);
+        super::committed_despite_rotation(self.authorize_global_store(&store).await)?;
         Ok(output)
     }
 
