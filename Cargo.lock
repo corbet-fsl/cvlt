@@ -869,9 +869,9 @@ dependencies = [
 
 [[package]]
 name = "barretenberg-rs"
-version = "5.3.0"
+version = "5.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2c0dd1db610abd71e7e0e65d16f4503167cbcd6929527599e0c003a4e44aec6"
+checksum = "f457c7c80c23f6d6da260ee3af089a32bb9682e434fa658e4a544deca854cf21"
 dependencies = [
  "hex",
  "libc",
@@ -1426,7 +1426,7 @@ dependencies = [
 [[package]]
 name = "cdht"
 version = "0.0.0"
-source = "git+https://git.corbet.ch/corbet-libre/cdht.git?branch=main#76d78fb067a4b5318bf9c6228a29a45bb071ec1a"
+source = "git+https://git.corbet.ch/corbet-libre/cdht.git?branch=main#cb678ac64897ccf461e3ff2413f54ec7488f0a8a"
 dependencies = [
  "blake3",
  "capnp",
@@ -1578,7 +1578,7 @@ dependencies = [
 [[package]]
 name = "ckmg"
 version = "0.0.0"
-source = "git+https://git.corbet.ch/corbet-libre/ckmg.git?branch=main#cf4a1fbb69b1f18f3962ec2a3ed74c6e02bd979a"
+source = "git+https://git.corbet.ch/corbet-libre/ckmg.git?branch=main#3915c1e684856f941f9c82eda841abee519bd31b"
 dependencies = [
  "blake3",
  "cdht",
@@ -1877,7 +1877,7 @@ source = "git+https://git.corbet.ch/corbet-libre/cprz.git?branch=main#43b5a114e7
 [[package]]
 name = "cpsd"
 version = "0.0.0"
-source = "git+https://git.corbet.ch/corbet-libre/cpsd.git?branch=main#66ce30c0782ec4d15550d9ebb182ee9854281515"
+source = "git+https://git.corbet.ch/corbet-libre/cpsd.git?branch=main#0b50370dd3a8dc16e3c9bf206a185ecdb2e47f78"
 dependencies = [
  "ark-bls12-381",
  "ark-ec 0.4.2",
@@ -2040,7 +2040,7 @@ dependencies = [
 [[package]]
 name = "csgn"
 version = "0.0.0"
-source = "git+https://git.corbet.ch/corbet-libre/csgn.git?branch=main#e33d6c943d83328ee91f7804d833c9d3be3ac4cf"
+source = "git+https://git.corbet.ch/corbet-libre/csgn.git?branch=main#b300d5f1aff8646d474bce7b57148b3673adbf5a"
 dependencies = [
  "ciborium-ll",
  "coset",
@@ -2151,7 +2151,7 @@ dependencies = [
 [[package]]
 name = "cvln"
 version = "0.0.0"
-source = "git+https://git.corbet.ch/corbet-libre/cvln.git?branch=main#2fbf97229c452daac82a5421987c283ed7e58078"
+source = "git+https://git.corbet.ch/corbet-libre/cvln.git?branch=main#9f9f1d8b506db797d9d8f43fcc35129db27d1b78"
 dependencies = [
  "flume",
  "parking_lot",
@@ -2220,7 +2220,7 @@ dependencies = [
 [[package]]
 name = "cwlt-engine"
 version = "0.0.0"
-source = "git+https://git.corbet.ch/corbet-libre/cwlt.git?branch=main#3375ba17a7e22b07c41d9cfefdcd0787729c721e"
+source = "git+https://git.corbet.ch/corbet-libre/cwlt.git?branch=main#0f15b7b190e3a3b5d24e6cc3539c71c98cb889d3"
 dependencies = [
  "acvm",
  "barretenberg-rs",
@@ -2269,7 +2269,7 @@ dependencies = [
 [[package]]
 name = "czkp"
 version = "0.0.0"
-source = "git+https://git.corbet.ch/corbet-libre/czkp.git?branch=main#34e740f022ca585fd3f75237fbf375c391bfadeb"
+source = "git+https://git.corbet.ch/corbet-libre/czkp.git?branch=main#8ce9472e2d9c0ef3d49c8beb09ca3e9fef735aa2"
 dependencies = [
  "ark-bn254",
  "ark-ff 0.6.0",
@@ -2527,7 +2527,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2792,7 +2792,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4781,7 +4781,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6188,7 +6188,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6245,7 +6245,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7134,7 +7134,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8155,7 +8155,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
